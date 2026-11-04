@@ -1,4 +1,4 @@
-const CACHE = "stl-v6";
+const CACHE = "stl-v7";
 const FILES = ["./", "index.html", "app.js", "report.js", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png",
   "lib/jszip.min.js", "lib/xlsx.min.js", "lib/docx.js"];
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())));

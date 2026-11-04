@@ -243,6 +243,8 @@ function renderEdit(id) {
     <label>Equipment / System</label><input id="f-system" list="dl-s" value="${esc(t.system)}">
     <label>Activity</label><input id="f-activity" list="dl-a" value="${esc(t.activity)}">
     <label>Witness T&amp;C Engineer</label><input id="f-witness" value="${esc(t.witness)}">
+    <label>With me in the test (optional)</label><input id="f-withMe" value="${esc(t.withMe)}" placeholder="e.g. Ahmed Ali, Yasser">
+    <label>Location for the summary (optional)</label><input id="f-location" value="${esc(t.location)}" placeholder="Empty = Project - Zone/Floor">
     ${dlist("dl-p", S.projects)}${dlist("dl-s", S.systems)}${dlist("dl-a", S.activities)}
   </div>
   <div class="card">
@@ -267,7 +269,7 @@ function renderEdit(id) {
   $("#fab").innerHTML = `<button class="btn" id="ok">Save</button>`;
   $("#ok").onclick = async () => {
     const v = (k) => $("#f-" + k).value.trim();
-    ["date", "time", "sr", "project", "system", "activity", "witness", "remarks"].forEach((k) => (t[k] = v(k)));
+    ["date", "time", "sr", "project", "system", "activity", "witness", "withMe", "location", "remarks"].forEach((k) => (t[k] = v(k)));
     const lines = (k) => v(k).split(/\n/).map((s) => s.trim()).filter(Boolean);
     const rawTags = lines("tags"), rawZones = lines("zones"), rawBundles = lines("bundles"), qty = lines("qty").map((x) => parseInt(x, 10) || 1);
     const pick = (arr, i) => arr.length === 1 ? arr[0] : arr[i] || "";
@@ -333,6 +335,7 @@ async function renderTest(id, keepScroll) {
   let h = `<div class="card">
     <div class="row" style="justify-content:space-between"><b>${esc(t.project || "")}</b><span class="chip ${statusClass(st)}">${esc(st)}</span></div>
     <div class="muted">${esc([t.date, t.time, t.sr ? "Sr. " + t.sr : "", t.activity].filter(Boolean).join(" · "))}</div>
+    <button class="btn ghost block" id="t-share" style="margin-top:10px">💬 Share summary (WhatsApp)</button>
   </div>`;
   for (const g of t.tags) {
     const s = Report.tagStatus(t, g);
@@ -361,6 +364,7 @@ async function renderTest(id, keepScroll) {
   if (keepScroll) window.scrollTo(0, y);
 
   $("#view").onclick = async (e) => {
+    if (e.target.id === "t-share") return shareSummary(t);
     if (e.target.id === "t-sync") {
       const miss = t.tags.reduce((n, g) => n + t.shots.filter((s) => !t.photos.some((p) => p.tagId === g.id && p.shot === s)).length, 0);
       const noForm = t.tags.filter((g) => !t.photos.some((p) => p.tagId === g.id && p.shot === FORM_SHOT)).length;
@@ -398,6 +402,22 @@ async function renderTest(id, keepScroll) {
     $("#shot").onclick = () => choose(false);
     $("#lib").onclick = () => choose(true);
   }
+}
+
+async function shareSummary(t) {
+  const text = Report.whatsappText(t, S);
+  const bg = sheet(`<b>Summary</b><textarea id="sum-t" rows="${Math.min(16, text.split("\n").length + 2)}" style="margin-top:10px;font-size:14px">${esc(text)}</textarea>
+    <div class="hint">You can edit it before sending.</div>
+    <div class="row" style="margin-top:12px"><button class="btn ghost" id="sum-copy" style="flex:1">Copy</button><button class="btn" id="sum-wa" style="flex:1;background:#1f9d55">Send to WhatsApp</button></div>`);
+  const val = () => bg.querySelector("#sum-t").value;
+  bg.querySelector("#sum-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(val()); toast("Copied ✓"); }
+    catch { bg.querySelector("#sum-t").select(); document.execCommand("copy"); toast("Copied ✓"); }
+  };
+  bg.querySelector("#sum-wa").onclick = async () => {
+    if (navigator.share) { try { await navigator.share({ text: val() }); return; } catch (e) { if (e.name === "AbortError") return; } }
+    location.href = "https://wa.me/?text=" + encodeURIComponent(val());
+  };
 }
 
 function sheet(html) {
@@ -467,7 +487,7 @@ function renderSettings() {
   const ta = (k) => `<label>${k[0].toUpperCase() + k.slice(1)} list (one per line)</label><textarea id="s-${k}" rows="5">${esc((S[k] || []).join("\n"))}</textarea>`;
   $("#view").innerHTML = `
   <div class="card">
-    <label style="margin-top:0">Your name (Witness T&amp;C Engineer)</label><input id="s-engineer" value="${esc(S.engineer)}">
+    <label style="margin-top:0">Your name (as you want it in reports &amp; WhatsApp, e.g. Abdelhalim Tarik)</label><input id="s-engineer" value="${esc(S.engineer)}">
     <label>Project name (report subtitle)</label><input id="s-projectName" value="${esc(S.projectName)}" placeholder="e.g. Holy Haram Expansion">
     <div class="grid2">
       <div><label>Discipline</label><input id="s-discipline" value="${esc(S.discipline)}"></div>
@@ -622,7 +642,7 @@ async function getPlans() {
         for (const g of x.tags || []) for (const u of expandTag(String(g.tag || "").trim(), parseInt(g.qty, 10) || 1))
           tags.push({ id: uid(), tag: u, zone: g.zone || "", bundle: g.bundle || "", status: "", remark: "" });
         const t = { id: uid(), date: x.date || today(), sr: String(x.sr ?? ""), project: x.project || "", time: x.time || "", system: x.system || "",
-          activity: x.activity || "", witness: x.witness || S.engineer, remarks: x.remarks || "", tags, photos: [], shots: shotsFor(x.system), createdAt: Date.now() };
+          activity: x.activity || "", witness: x.witness || S.engineer, withMe: x.withMe || "", location: x.location || "", remarks: x.remarks || "", tags, photos: [], shots: shotsFor(x.system), createdAt: Date.now() };
         TESTS.push(t); await dbPutTest(t); added++;
       }
       await callSync(S.syncUrl, { key: S.syncKey, action: "delete", id: pl.id });
@@ -636,7 +656,7 @@ async function sendPlans() {
   if (!list.length) return;
   if (!confirm(`Send ${list.length} test(s) to the phone?\nThey'll be removed from this computer after sending.`)) return;
   const tests = list.map((t) => ({ date: t.date, sr: t.sr, project: t.project, time: t.time, system: t.system, activity: t.activity,
-    witness: t.witness, remarks: t.remarks, tags: t.tags.map((g) => ({ tag: g.tag, zone: g.zone, bundle: g.bundle, qty: 1 })) }));
+    witness: t.witness, withMe: t.withMe, location: t.location, remarks: t.remarks, tags: t.tags.map((g) => ({ tag: g.tag, zone: g.zone, bundle: g.bundle, qty: 1 })) }));
   try {
     const r = await callSync(S.syncUrl, { key: S.syncKey, action: "plan_put", data: JSON.stringify({ tests }) });
     if (!r.ok) throw new Error(r.error);

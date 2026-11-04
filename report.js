@@ -64,6 +64,28 @@
   }
   const issueText = (c) => Object.entries(c).map(([k, v]) => `${k} (${v})`).join(", ");
 
+  /* Short text for the WhatsApp group, e.g.
+     Pre-Commissioning & I/O Testing – BMS DCP
+     Location: Haram North Bridges - Bridge A Second Floor
+     1- DCP/SHZ-SFA-10...Pass
+     Engineer Abdelhalim Tarik & Ahmed Ali                                   */
+  function whatsappText(test, settings = {}) {
+    const uniq = (a) => [...new Set(a.map((x) => String(x || "").trim()).filter(Boolean))];
+    const title = [test.activity, test.system].filter(Boolean).join(" – ") || "Test";
+    const loc = test.location || [test.project, uniq((test.tags || []).map((g) => g.zone)).join(", ")].filter(Boolean).join(" - ");
+    const lines = [title];
+    if (loc) lines.push(`Location: ${loc}`);
+    (test.tags || []).forEach((g, i) => {
+      const st = tagStatus(test, g);
+      const why = st === "Fail" ? tagRemark(test, g) : "";
+      lines.push(`${i + 1}- ${g.tag}...${st}${why ? ` (${why})` : ""}`);
+    });
+    if (test.remarks) lines.push(test.remarks);
+    const names = [settings.engineer || test.witness, ...String(test.withMe || "").split(/[,،\n&]+/)].map((x) => String(x || "").trim()).filter(Boolean);
+    if (names.length) lines.push(`Engineer ${uniq(names).join(" & ")}`);
+    return lines.join("\n");
+  }
+
   function summaryText(test) {
     const tags = test.tags || [];
     const st = tags.map((t) => ({ t, s: tagStatus(test, t) }));
@@ -131,7 +153,7 @@
       ["Project", test.project], ["Date / Time", [test.date, test.time].filter(Boolean).join("  ·  ")],
       ["Sr. (Invitation)", test.sr], ["Equipment / System", test.system],
       ["Activity", test.activity], ["Discipline", settings.discipline],
-      ["Witness T&C Engineer", test.witness || settings.engineer],
+      ["Witness T&C Engineer", [test.witness || settings.engineer, test.withMe].filter(Boolean).join(" & ")],
     ].filter(([, v]) => v !== undefined && v !== "");
 
     const children = [
@@ -142,44 +164,27 @@
         rows: info.map(([k, v]) => new TableRow({ children: [cell(k, { w: 2800, bold: true, fill: "EEF2F6" }), cell(v, { w: W - 2800 })] })),
       }),
       new Paragraph({ spacing: { before: 240, after: 100 }, children: [txt("STATUS:  ", { size: 26, bold: true }), txt(status.toUpperCase(), { size: 26, bold: true, color: colorFor(status) })] }),
-      new Paragraph({ spacing: { after: 120 }, children: [txt(test.aiSummary || summaryText(test))] }),
+      ...whatsappText(test, settings).split("\n").map((l, i) => new Paragraph({ spacing: { after: 40 }, children: [txt(l, { bold: i === 0 })] })),
     ];
 
     // Equipment table — mirrors the invitation sheet
-    const cw = [1400, 1900, 900, 1000, 750, W - 5950];
+    const cw = [1500, 2100, 1000, 1000, W - 5600];
     children.push(h2("Equipment Status"));
     children.push(new Table({
       width: { size: W, type: WidthType.DXA }, columnWidths: cw,
       rows: [
-        new TableRow({ tableHeader: true, children: ["Zone / Floor", "Tag Name", "Bundle", "Status", "Photos", "Remarks"].map((h, k) => cell(h, { w: cw[k], bold: true, fill: "1F3864", color: "FFFFFF" })) }),
+        new TableRow({ tableHeader: true, children: ["Zone / Floor", "Tag Name", "Bundle", "Status", "Remarks"].map((h, k) => cell(h, { w: cw[k], bold: true, fill: "1F3864", color: "FFFFFF" })) }),
         ...(test.tags || []).map((t) => {
           const s = tagStatus(test, t);
-          const sp = shotProgress(test, t);
           return new TableRow({ cantSplit: true, children: [
             cell(t.zone, { w: cw[0] }), cell(t.tag, { w: cw[1], bold: true }), cell(t.bundle, { w: cw[2] }),
             cell(s, { w: cw[3], bold: true, color: colorFor(s) }),
-            cell(sp.total ? `${sp.done}/${sp.total}` : String(photosOf(test, t.id).length), { w: cw[4], color: sp.missing.length ? "B9770E" : "1E8449" }),
-            cell(tagRemark(test, t), { w: cw[5] }),
+            cell(tagRemark(test, t), { w: cw[4] }),
           ] });
         }),
       ],
     }));
-    const miss = (test.tags || []).map((t) => ({ t, m: shotProgress(test, t).missing })).filter((x) => x.m.length);
-    if (miss.length) {
-      children.push(new Paragraph({ spacing: { before: 160, after: 60 }, children: [txt("Missing photos", { bold: true, color: "B9770E" })] }));
-      miss.forEach((x) => children.push(new Paragraph({ children: [txt(`${x.t.tag}: `, { bold: true, size: 18 }), txt(x.m.join(", "), { size: 18 })] })));
-    }
-    const tagsN = (test.tags || []).length;
-    const withForm = (test.tags || []).filter((g) => formsOf(test, g.id).length).length;
-    const noForm = (test.tags || []).filter((g) => !formsOf(test, g.id).length).map((g) => g.tag);
-    children.push(new Paragraph({ spacing: { before: 120 }, children: [txt("Site test forms: ", { bold: true }),
-      txt(`${withForm} of ${tagsN} tag(s) attached${withForm ? " (see end of report)" : ""}`, { color: noForm.length ? "B9770E" : "1E8449" }),
-      txt(noForm.length && noForm.length < tagsN ? ` — missing: ${noForm.join(", ")}` : "", { size: 18 })] }));
 
-    if (test.remarks) {
-      children.push(h2("General Remarks"));
-      String(test.remarks).split("\n").forEach((l) => children.push(new Paragraph({ children: [txt(l)] })));
-    }
 
     // Photo log grouped by tag, 2 per row
     const names = photoFiles(test);
@@ -307,16 +312,17 @@
       const tg = {}; (t.tags || []).forEach((g) => (tg[g.id] = g.tag));
       const meta = {
         id: t.id, date: t.date, time: t.time, sr: t.sr, project: t.project, system: t.system, activity: t.activity,
-        witness: t.witness || settings.engineer, remarks: t.remarks, status: testStatus(t), summary: summaryText(t),
+        witness: t.witness || settings.engineer, withMe: t.withMe || "", location: t.location || "", remarks: t.remarks, status: testStatus(t), summary: summaryText(t),
         tags: (t.tags || []).map((g) => ({ tag: g.tag, zone: g.zone, bundle: g.bundle, status: tagStatus(t, g), remarks: tagRemark(t, g), missingPhotos: shotProgress(t, g).missing })),
         photos: (t.photos || []).map((p, i) => ({ file: names[i], tag: p.tagId === FORM ? "Site test form" : tg[p.tagId] || "General", shot: p.shot || "", status: STATUS[p.status], issue: p.issue || "", comment: p.comment || "" })),
       };
       zip.file(`${dir}/data.json`, JSON.stringify(meta, null, 2));
+      zip.file(`${dir}/WhatsApp.txt`, "\ufeff" + whatsappText(t, settings).replace(/\n/g, "\r\n"));
     }
     zip.file("Test_Log.xlsx", buildLogWorkbook(allTests, settings));
     return zip.generateAsync({ type: isNode ? "nodebuffer" : "blob", compression: "STORE" });
   }
 
-  const api = { STATUS, tagStatus, tagRemark, testStatus, summaryText, folderPath, photoFiles, buildDocx, buildLogWorkbook, buildExportZip };
+  const api = { whatsappText, STATUS, tagStatus, tagRemark, testStatus, summaryText, folderPath, photoFiles, buildDocx, buildLogWorkbook, buildExportZip };
   if (isNode) module.exports = api; else root.Report = api;
 })(typeof window !== "undefined" ? window : globalThis);
