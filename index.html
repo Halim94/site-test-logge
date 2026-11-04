@@ -95,6 +95,7 @@
   .sync-bar.busy { background: var(--pend-bg); color: var(--accent); }
   .sync-bar.offline { background: var(--pend-bg); color: var(--muted); }
   .sync-bar.error { background: var(--fail-bg); color: var(--fail); }
+  .shot.form-missing { border-color: var(--cmt); color: var(--cmt); }
   hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 </style>
 </head>
@@ -104,6 +105,7 @@
 <div id="fab" class="fab"></div>
 <input id="cam" type="file" accept="image/*" capture="environment" hidden>
 <input id="pick" type="file" accept="image/*" multiple hidden>
+<input id="any" type="file" accept="image/*" hidden>
 <script src="lib/jszip.min.js"></script>
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/docx.js"></script>

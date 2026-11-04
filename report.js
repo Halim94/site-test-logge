@@ -8,7 +8,10 @@
 
   const STATUS = { A: "Accepted", R: "Rejected", C: "Comment" };
   const pad = (n) => String(n).padStart(2, "0");
-  const FORM = "__form";
+  const FORM = "__form";              // old: one form per test
+  const FORM_SHOT = "Site test form";  // now: form pages inside each tag
+  const isForm = (p) => p.tagId === FORM || p.shot === FORM_SHOT;
+  const formsOf = (test, tagId) => (test.photos || []).filter((p) => p.tagId === tagId && p.shot === FORM_SHOT);
   function shotProgress(test, tag) {
     const shots = test.shots || [];
     const ps = photosOf(test, tag.id);
@@ -23,7 +26,7 @@
   /* Tag status: manual choice wins; otherwise any rejected photo = Fail, any photo = Pass. */
   function tagStatus(test, tag) {
     if (tag.status) return tag.status;
-    const ps = photosOf(test, tag.id);
+    const ps = photosOf(test, tag.id).filter((p) => !isForm(p));
     if (ps.some((p) => p.status === "R")) return "Fail";
     if (ps.length) return "Pass";
     return "Pending";
@@ -95,6 +98,7 @@
     return (test.photos || []).map((p) => {
       if (p.tagId === FORM) { counter[FORM] = (counter[FORM] || 0) + 1; return `00_Site_Test_Form_page${pad(counter[FORM])}.jpg`; }
       const tn = safe(String(tagName[p.tagId] || "General").split(" ")[0]);
+      if (p.shot === FORM_SHOT) { const k = tn + "|form"; counter[k] = (counter[k] || 0) + 1; return `${tn}_Site_Test_Form_p${pad(counter[k])}.jpg`; }
       const base = p.shot ? `${tn}_${safe(p.shot)}` : tn;
       counter[base] = (counter[base] || 0) + 1;
       const st = { A: "OK", R: "REJ", C: "CMT" }[p.status] || "NA";
@@ -165,9 +169,12 @@
       children.push(new Paragraph({ spacing: { before: 160, after: 60 }, children: [txt("Missing photos", { bold: true, color: "B9770E" })] }));
       miss.forEach((x) => children.push(new Paragraph({ children: [txt(`${x.t.tag}: `, { bold: true, size: 18 }), txt(x.m.join(", "), { size: 18 })] })));
     }
-    const formN = (test.photos || []).filter((p) => p.tagId === FORM).length;
-    children.push(new Paragraph({ spacing: { before: 120 }, children: [txt("Site test form: ", { bold: true }),
-      txt(formN ? `attached (${formN} page${formN > 1 ? "s" : ""}, see end of report)` : "not attached", { color: formN ? "1E8449" : "B9770E" })] }));
+    const tagsN = (test.tags || []).length;
+    const withForm = (test.tags || []).filter((g) => formsOf(test, g.id).length).length;
+    const noForm = (test.tags || []).filter((g) => !formsOf(test, g.id).length).map((g) => g.tag);
+    children.push(new Paragraph({ spacing: { before: 120 }, children: [txt("Site test forms: ", { bold: true }),
+      txt(`${withForm} of ${tagsN} tag(s) attached${withForm ? " (see end of report)" : ""}`, { color: noForm.length ? "B9770E" : "1E8449" }),
+      txt(noForm.length && noForm.length < tagsN ? ` — missing: ${noForm.join(", ")}` : "", { size: 18 })] }));
 
     if (test.remarks) {
       children.push(h2("General Remarks"));
@@ -182,13 +189,13 @@
       const data = await getPhoto(p.id);
       if (data) items.push({ p, data, name: names[i] });
     }
-    if (items.some((x) => x.p.tagId !== FORM)) {
+    if (items.some((x) => !isForm(x.p))) {
       children.push(h2("Photo Log", { pb: true }));
       const groups = [...(test.tags || []).map((t) => ({ id: t.id, label: t.tag })), { id: "", label: "General" }];
       const half = W / 2;
       for (const g of groups) {
         const order = (s) => { const i = (test.shots || []).indexOf(s); return i < 0 ? 999 : i; };
-        const gi = items.filter((x) => (x.p.tagId || "") === g.id).sort((a, b) => order(a.p.shot) - order(b.p.shot));
+        const gi = items.filter((x) => (x.p.tagId || "") === g.id && !isForm(x.p)).sort((a, b) => order(a.p.shot) - order(b.p.shot));
         if (!gi.length) continue;
         children.push(new Paragraph({ spacing: { before: 160, after: 80 }, children: [txt(g.label, { size: 22, bold: true, color: "1F3864" })] }));
         const rows = [];
@@ -214,12 +221,16 @@
       }
     }
 
-    const forms = items.filter((x) => x.p.tagId === FORM);
-    forms.forEach((x, k) => {
+    const tagLabel = {}; (test.tags || []).forEach((g) => (tagLabel[g.id] = g.tag));
+    const pageNo = {};
+    const forms = items.filter((x) => isForm(x.p));
+    forms.forEach((x) => {
+      const key = x.p.tagId || "";
+      const k = (pageNo[key] = (pageNo[key] || 0) + 1) - 1;
       const ratio = x.p.h && x.p.w ? x.p.h / x.p.w : 1.414;
       let w = 640, h = Math.round(640 * ratio);
       if (h > 860) { h = 860; w = Math.round(860 / ratio); }
-      children.push(new Paragraph({ pageBreakBefore: true, spacing: { after: 80 }, children: [txt(`Site Test Form — page ${k + 1}`, { size: 22, bold: true, color: "1F3864" })] }));
+      children.push(new Paragraph({ pageBreakBefore: true, spacing: { after: 80 }, children: [txt(`Site Test Form — ${tagLabel[key] || "General"} — page ${k + 1}`, { size: 22, bold: true, color: "1F3864" })] }));
       children.push(new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: x.data, transformation: { width: w, height: h } })] }));
     });
 
@@ -252,7 +263,7 @@
       (t.tags || []).forEach((g) => {
         rows.push([t.date, day, t.sr, t.project, g.zone, t.time, t.system, g.tag, 1, t.activity, g.bundle, t.witness || settings.engineer || "",
           tagStatus(t, g), tagRemark(t, g), ...(() => { const sp = shotProgress(t, g); return [sp.total ? `${sp.done}/${sp.total}` : photosOf(t, g.id).length, sp.missing.join(", ")]; })(),
-          (t.photos || []).some((p) => p.tagId === FORM) ? "Yes" : "No", "Open"]);
+          formsOf(t, g.id).length || (t.photos || []).some((p) => p.tagId === FORM) ? "Yes" : "No", "Open"]);
         links.push(`${folderPath(t)}/Report.docx`.replace(/\//g, "\\"));
       });
     });

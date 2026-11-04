@@ -28,7 +28,9 @@ const DEFAULTS = {
     "* = Nameplate; General view; Running readings",
   ].join("\n"),
 };
-const FORM = "__form"; // photos of the paper test form filled on site
+const FORM = "__form"; // old test-level form photos (kept for compatibility)
+const FORM_SHOT = "Site test form"; // form pages are now stored inside each tag with this shot name
+const isFormP = (p) => p.tagId === FORM || p.shot === FORM_SHOT;
 
 function shotsFor(system) {
   const sys = String(system || "").toLowerCase();
@@ -132,9 +134,10 @@ function compress(file, max = 1600, q = 0.82) {
   });
 }
 let captureTarget = null; // { testId, tagId, shot }
-function capture(testId, tagId, fromLibrary, shot) {
+// mode: "cam" = camera straight away, "lib" = photo library (multi-select), "any" = iPhone asks Take Photo / Photo Library
+function capture(testId, tagId, mode, shot) {
   captureTarget = { testId, tagId, shot: shot || "" };
-  const inp = fromLibrary ? $("#pick") : $("#cam");
+  const inp = mode === true || mode === "lib" ? $("#pick") : mode === "any" ? $("#any") : $("#cam");
   inp.value = ""; inp.click();
 }
 async function onFiles(e) {
@@ -143,13 +146,13 @@ async function onFiles(e) {
   const t = TESTS.find((x) => x.id === captureTarget.testId);
   if (!t) return;
   let last;
-  const isForm = captureTarget.tagId === FORM;
+  const isForm = captureTarget.tagId === FORM || captureTarget.shot === FORM_SHOT;
   for (const f of files) {
     try {
       const { blob, w, h } = await compress(f, isForm ? 2400 : 1600, isForm ? 0.85 : 0.82);
       const id = uid();
       await dbPutPhoto(id, blob);
-      const shot = isForm ? "Site test form" : (files.length === 1 ? captureTarget.shot : "") || "";
+      const shot = isForm ? FORM_SHOT : (files.length === 1 ? captureTarget.shot : "") || "";
       last = { id, tagId: captureTarget.tagId || "", shot, status: "A", issue: "", comment: "", w, h, at: Date.now() };
       t.photos.push(last);
     } catch (err) { toast("Photo error: " + err.message); }
@@ -307,7 +310,8 @@ async function renderTest(id, keepScroll) {
     let h = "";
     for (const p of t.photos.filter((p) => (p.tagId || "") === tagId)) {
       const u = await photoURL(p.id);
-      h += `<button class="thumb" data-photo="${p.id}">${u ? `<img src="${u}" alt="">` : `<span class="gone">cleared</span>`}${tagId === FORM ? "" : `<i class="${p.status}"></i>`}${p.shot && tagId !== FORM ? `<span class="cap">${esc(p.shot)}</span>` : ""}</button>`;
+      const f = isFormP(p);
+      h += `<button class="thumb" data-photo="${p.id}">${u ? `<img src="${u}" alt="">` : `<span class="gone">cleared</span>`}${f ? "" : `<i class="${p.status}"></i>`}${f ? `<span class="cap">📄 Form</span>` : p.shot ? `<span class="cap">${esc(p.shot)}</span>` : ""}</button>`;
     }
     return h + (t.photosPurged ? "" : `<button class="add" data-cam="${tagId}" aria-label="Add photo">+</button>`);
   };
@@ -320,6 +324,10 @@ async function renderTest(id, keepScroll) {
       const cls = !p.length ? "" : p.some((x) => x.status === "R") ? "R" : p.some((x) => x.status === "C") ? "C" : "A";
       return `<button class="shot ${cls ? "done " + cls : ""}" data-shot="${esc(s)}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}>${cls ? "✓ " : ""}${esc(s)}</button>`;
     }).join("")}</div>`;
+  };
+  const formRow = (g) => {
+    const n = t.photos.filter((p) => p.tagId === g.id && p.shot === FORM_SHOT).length;
+    return `<div class="shots" style="margin-top:8px"><button class="shot ${n ? "done A" : "form-missing"}" data-shot="${FORM_SHOT}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}>📄 ${n ? `Site test form ✓ ${n} page(s) · add page` : "Site test form — add photo"}</button></div>`;
   };
   const formN = t.photos.filter((p) => p.tagId === FORM).length;
   let h = `<div class="card">
@@ -338,11 +346,11 @@ async function renderTest(id, keepScroll) {
       </div>
       <input class="remark" data-tag="${g.id}" value="${esc(g.remark)}" placeholder="Remark for this tag (optional)" style="margin-top:8px">
       ${checklist(g)}
+      ${formRow(g)}
       <div class="thumbs">${await thumbs(g.id)}</div>
     </div>`;
   }
-  h += `<div class="card"><b>Site test form</b> ${formN ? `<span class="chip Pass">${formN} page(s)</span>` : `<span class="chip Pending">not added</span>`}
-    <div class="hint">Photo of the paper form you fill and sign on site. One photo per page — it goes into the report as a full page.</div>
+  if (formN) h += `<div class="card"><b>Site test form (whole test)</b> <span class="chip Pass">${formN} page(s)</span>
     <div class="thumbs">${await thumbs(FORM)}</div></div>`;
   h += `<div class="card"><b>General photos</b><div class="hint">Not linked to a specific tag.</div><div class="thumbs">${await thumbs("")}</div></div>`;
   if (S.syncUrl && !t.photosPurged) h += needsExport(t)
@@ -355,17 +363,17 @@ async function renderTest(id, keepScroll) {
   $("#view").onclick = async (e) => {
     if (e.target.id === "t-sync") {
       const miss = t.tags.reduce((n, g) => n + t.shots.filter((s) => !t.photos.some((p) => p.tagId === g.id && p.shot === s)).length, 0);
-      const noForm = !t.photos.some((p) => p.tagId === FORM);
-      const warn = [miss ? `${miss} checklist photo(s) missing` : "", noForm ? "no site test form photo" : ""].filter(Boolean).join(" and ");
+      const noForm = t.tags.filter((g) => !t.photos.some((p) => p.tagId === g.id && p.shot === FORM_SHOT)).length;
+      const warn = [miss ? `${miss} checklist photo(s) missing` : "", noForm ? `${noForm} tag(s) without site test form` : ""].filter(Boolean).join(" and ");
       if (warn && !confirm(`Heads up: ${warn}.\nSync anyway?`)) return;
       e.target.disabled = true; e.target.textContent = "Sending…";
       await syncNow(true, t.id);
       return renderTest(t.id, true);
     }
     const sh = e.target.closest("[data-shot]");
-    if (sh) return capture(t.id, sh.dataset.tg, false, sh.dataset.shot);
+    if (sh) return capture(t.id, sh.dataset.tg, "any", sh.dataset.shot);
     const cam = e.target.closest("[data-cam]");
-    if (cam) return capture(t.id, cam.dataset.cam, false, cam.dataset.cam && cam.dataset.cam !== FORM ? nextShot(t, cam.dataset.cam) : "");
+    if (cam) return capture(t.id, cam.dataset.cam, "any", cam.dataset.cam && cam.dataset.cam !== FORM ? nextShot(t, cam.dataset.cam) : "");
     const ph = e.target.closest("[data-photo]");
     if (ph) return openPhoto(t.id, ph.dataset.photo);
     const sb = e.target.closest(".seg button");
@@ -402,7 +410,6 @@ function sheet(html) {
 function pickTag(t, cb) {
   const bg = sheet(`<b>Photo for which tag?</b><div style="display:grid;gap:8px;margin-top:12px">
     ${t.tags.map((g) => { const n = nextShot(t, g.id); return `<button class="btn ghost" data-t="${g.id}">${esc(g.tag)}${n ? `<span class="muted" style="font-weight:500"> · next: ${esc(n)}</span>` : ""}</button>`; }).join("")}
-    <button class="btn ghost" data-t="${FORM}">Site test form (paper)</button>
     <button class="btn ghost" data-t="">General</button></div>`);
   bg.onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { bg.remove(); cb(b.dataset.t); } else if (e.target === bg) bg.remove(); };
 }
@@ -412,12 +419,11 @@ async function openPhoto(testId, photoId, isNew) {
   const p = t.photos.find((x) => x.id === photoId);
   if (!p) return;
   const u = await photoURL(p.id);
-  const isForm = p.tagId === FORM;
   const bg = sheet(`
     ${u ? `<img src="${u}" alt="">` : `<div class="muted">Photo cleared from phone.</div>`}
     <div class="grid2">
-      <div><label>Tag</label><select id="p-tag">${t.tags.map((g) => `<option value="${g.id}"${g.id === p.tagId ? " selected" : ""}>${esc(g.tag)}</option>`).join("")}<option value="${FORM}"${isForm ? " selected" : ""}>Site test form</option><option value=""${!p.tagId ? " selected" : ""}>General</option></select></div>
-      <div><label>Shot</label><select id="p-shot"><option value="">Other</option>${opts(t.shots, p.shot)}</select></div>
+      <div><label>Tag</label><select id="p-tag">${t.tags.map((g) => `<option value="${g.id}"${g.id === p.tagId ? " selected" : ""}>${esc(g.tag)}</option>`).join("")}${p.tagId === FORM ? `<option value="${FORM}" selected>Site test form (whole test)</option>` : ""}<option value=""${!p.tagId ? " selected" : ""}>General</option></select></div>
+      <div><label>Shot</label><select id="p-shot"><option value="">Other</option>${opts([...(t.shots || []), FORM_SHOT], p.shot)}</select></div>
     </div>
     <div class="seg" id="p-st">
       <button data-st="A" class="pass ${p.status === "A" ? "on" : ""}">Accepted</button>
@@ -438,7 +444,7 @@ async function openPhoto(testId, photoId, isNew) {
   };
   const commit = async () => {
     p.tagId = bg.querySelector("#p-tag").value; p.status = status;
-    p.shot = p.tagId === FORM ? "Site test form" : bg.querySelector("#p-shot").value;
+    p.shot = p.tagId === FORM ? FORM_SHOT : bg.querySelector("#p-shot").value;
     p.issue = status === "A" ? "" : bg.querySelector("#p-iss").value;
     p.comment = bg.querySelector("#p-cmt").value.trim();
     await save(t); bg.remove(); renderTest(t.id, true);
@@ -446,7 +452,7 @@ async function openPhoto(testId, photoId, isNew) {
   bg.querySelector("#p-ok").onclick = commit;
   if (isNew) bg.querySelector("#p-more").onclick = async () => {
     const tg = bg.querySelector("#p-tag").value; await commit();
-    capture(t.id, tg, false, tg && tg !== FORM ? nextShot(t, tg) : "");
+    capture(t.id, tg, "any", tg && tg !== FORM ? nextShot(t, tg) : "");
   };
   bg.querySelector("#p-del").onclick = async () => {
     if (!confirm("Delete this photo?")) return;
@@ -653,7 +659,7 @@ async function purgeOld() {
 
 /* ---------------- Boot ---------------- */
 (async function boot() {
-  $("#cam").onchange = onFiles; $("#pick").onchange = onFiles;
+  $("#cam").onchange = onFiles; $("#pick").onchange = onFiles; $("#any").onchange = onFiles;
   try {
     await openDB();
     S = { ...DEFAULTS, ...((await kvGet("settings")) || {}) };
