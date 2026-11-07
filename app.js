@@ -48,6 +48,23 @@ function expandTag(tag, n) {
   const m = tag.match(/^(\S+)(.*)$/);
   return Array.from({ length: n }, (_, i) => `${m[1]}-${i + 1}${m[2]}`);
 }
+/* Remember a test's photo list as the default for that exact system name.
+   Learned lines go to the top of Settings → Photo checklists, so they win next time. */
+async function learnChecklist(t) {
+  const sys = String(t.system || "").trim();
+  const shots = (t.shots || []).map((x) => x.trim()).filter(Boolean);
+  if (!sys || !shots.length) return false;
+  const key = sys.toLowerCase().replace(/[|=;\n]/g, " ").trim();
+  if (shotsFor(sys).join(";") === shots.join(";")) return false; // already the default
+  const lines = String(S.checklists || "").split(/\n/).filter((l) => {
+    const k = l.split("=")[0];
+    return !(l.includes("=") && k.split("|").map((x) => x.trim().toLowerCase()).length === 1 && k.trim().toLowerCase() === key);
+  });
+  S.checklists = [`${key} = ${shots.join("; ")}`, ...lines].join("\n");
+  await kvSet("settings", S);
+  return true;
+}
+
 function nextShot(t, tagId) {
   const have = new Set(t.photos.filter((p) => p.tagId === tagId).map((p) => p.shot));
   return (t.shots || []).find((s) => !have.has(s)) || "";
@@ -260,7 +277,7 @@ function renderEdit(id) {
       Qty. 2 splits a tag into two units: P-1FM-A → P-1FM-A-1 and P-1FM-A-2. You can rename them after.</div>
   </div>
   <div class="card"><b>Photo checklist</b>
-    <div class="hint">Shots needed for each tag. Filled automatically from the system name — change it here for this test only.</div>
+    <div class="hint">Shots needed for each tag. Filled automatically from the system name. If you change it, the new list is remembered for every test of this system.</div>
     <textarea id="f-shots" rows="5">${esc((t.shots && t.shots.length ? t.shots : shotsFor(t.system)).join("\n"))}</textarea>
     <button class="btn ghost" id="f-reshots" style="margin-top:8px">Reset from system name</button>
   </div>
@@ -276,6 +293,7 @@ function renderEdit(id) {
     const tags = [], zones = [], bundles = [];
     rawTags.forEach((tg, i) => expandTag(tg, pick(qty, i)).forEach((u) => { tags.push(u); zones.push(pick(rawZones, i)); bundles.push(pick(rawBundles, i)); }));
     t.shots = lines("shots");
+    if (await learnChecklist(t)) toast(`Photo list saved for every "${t.system}" test`, 2600);
     const old = t.tags;
     const used = new Set();
     t.tags = tags.map((tag, i) => {
@@ -606,6 +624,7 @@ async function syncNow(manual, onlyId) {
       const r = await callSync(S.syncUrl, { key: S.syncKey, action: "upload", name, data: await blobToBase64(blob) });
       if (!r.ok) throw new Error(r.error || "upload refused");
       if ((t.updatedAt || 0) === stamp) { t.exportedAt = Date.now(); await dbPutTest(t); } // changed meanwhile → next round
+      await learnChecklist(t);
       sent++;
     }
     SYNC.state = "idle"; SYNC.last = Date.now();
