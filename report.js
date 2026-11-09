@@ -299,7 +299,8 @@
   }
 
   /* ---------------- Export ZIP ---------------- */
-  async function buildExportZip(toExport, allTests, settings, getPhoto) {
+  async function buildExportZip(toExport, allTests, settings, getPhoto, getPhotoForReport) {
+    const reportPhoto = getPhotoForReport || getPhoto;
     const zip = new JSZip();
     for (const t of toExport) {
       const dir = folderPath(t);
@@ -308,7 +309,7 @@
         const data = await getPhoto(t.photos[i].id);
         if (data) zip.file(`${dir}/${names[i]}`, data);
       }
-      zip.file(`${dir}/Report.docx`, await buildDocx(t, settings, getPhoto));
+      zip.file(`${dir}/Report.docx`, await buildDocx(t, settings, reportPhoto));
       const tg = {}; (t.tags || []).forEach((g) => (tg[g.id] = g.tag));
       const meta = {
         id: t.id, date: t.date, time: t.time, sr: t.sr, project: t.project, system: t.system, activity: t.activity,

@@ -551,6 +551,20 @@ async function getPhotoBuf(id) {
   const b = await dbGetPhoto(id);
   return b ? new Uint8Array(await b.arrayBuffer()) : null;
 }
+// Smaller copy for the Word report (full-size photos still go in the folder) — keeps uploads light
+async function getPhotoSmall(id) {
+  const b = await dbGetPhoto(id);
+  if (!b) return null;
+  try {
+    const img = await new Promise((res, rej) => { const u = URL.createObjectURL(b); const im = new Image(); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = rej; im.src = u; });
+    const k = Math.min(1, 1100 / Math.max(img.width, img.height));
+    if (k >= 1) return new Uint8Array(await b.arrayBuffer());
+    const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const sb = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.72));
+    return new Uint8Array(await sb.arrayBuffer());
+  } catch { return new Uint8Array(await b.arrayBuffer()); }
+}
 async function doExport(all) {
   const list = TESTS.filter((t) => all ? !t.photosPurged : needsExport(t));
   if (!list.length) return toast("Nothing new to export");
@@ -607,6 +621,28 @@ async function callSync(url, payload) {
 function blobToBase64(blob) {
   return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
 }
+// Sends the ZIP in ~3 MB pieces (one big request fails on mobile data); each piece retried 3 times.
+async function uploadInParts(name, b64, progress) {
+  const CH = 4 * 1024 * 1024; // base64 chars, multiple of 4
+  const total = Math.max(1, Math.ceil(b64.length / CH));
+  for (let i = 0; i < total; i++) {
+    progress(i + 1, total);
+    let last;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await callSync(S.syncUrl, { key: S.syncKey, action: "upload_chunk", name, index: i, total, data: b64.slice(i * CH, (i + 1) * CH) });
+        if (r.ok) { last = null; break; }
+        if (r.error === "unknown action") throw new Error("Update the Google sync script (new version needed for big tests)");
+        last = new Error(r.error || "upload refused");
+      } catch (e) {
+        if (/Update the Google sync script/.test(e.message)) throw e;
+        last = e; await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
+      }
+    }
+    if (last) throw new Error(`${last.message} (part ${i + 1}/${total})`);
+  }
+}
+
 async function syncNow(manual, onlyId) {
   if (!S.syncUrl || SYNC.busy) return;
   const list = TESTS.filter((t) => needsExport(t) && (!onlyId || t.id === onlyId));
@@ -618,11 +654,10 @@ async function syncNow(manual, onlyId) {
     for (const t of list) {
       SYNC.msg = `${sent + 1}/${list.length}`; paintSync();
       const stamp = t.updatedAt || Date.now();
-      const blob = await Report.buildExportZip([t], TESTS, S, getPhotoBuf);
-      if (blob.size > 45 * 1048576) throw new Error(`"${t.system}" is too big (${(blob.size / 1048576).toFixed(0)} MB) — split it or use manual export`);
+      const blob = await Report.buildExportZip([t], TESTS, S, getPhotoBuf, getPhotoSmall);
+      if (blob.size > 150 * 1048576) throw new Error(`"${t.system}" is too big (${(blob.size / 1048576).toFixed(0)} MB) — use manual export`);
       const name = `SiteTests_${t.date}_${String(t.sr || 0).padStart(2, "0")}_${t.id}_${Date.now()}.zip`;
-      const r = await callSync(S.syncUrl, { key: S.syncKey, action: "upload", name, data: await blobToBase64(blob) });
-      if (!r.ok) throw new Error(r.error || "upload refused");
+      await uploadInParts(name, await blobToBase64(blob), (i, n) => { SYNC.msg = `${sent + 1}/${list.length}` + (n > 1 ? ` · part ${i}/${n}` : ""); paintSync(); });
       if ((t.updatedAt || 0) === stamp) { t.exportedAt = Date.now(); await dbPutTest(t); } // changed meanwhile → next round
       await learnChecklist(t);
       sent++;
