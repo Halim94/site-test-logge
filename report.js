@@ -110,6 +110,7 @@
     return [pad(test.sr || 0), test.project, test.system].map(safe).filter(Boolean).join(" - ");
   }
   function folderPath(test) {
+    // one folder per test, ordered by Sr. (the laptop adds the engineer's name only if two people sync the same Sr.)
     return `Tests/${test.date}/${folderName(test)}`;
   }
   function photoFiles(test) {
@@ -301,6 +302,9 @@
   /* ---------------- Export ZIP ---------------- */
   async function buildExportZip(toExport, allTests, settings, getPhoto, getPhotoForReport) {
     const reportPhoto = getPhotoForReport || getPhoto;
+    const eng = settings.engineer || "";
+    toExport = toExport.map((t) => ({ ...t, engineer: t.engineer || eng }));
+    allTests = allTests.map((t) => ({ ...t, engineer: t.engineer || eng }));
     const zip = new JSZip();
     for (const t of toExport) {
       const dir = folderPath(t);
@@ -312,7 +316,7 @@
       zip.file(`${dir}/Report.docx`, await buildDocx(t, settings, reportPhoto));
       const tg = {}; (t.tags || []).forEach((g) => (tg[g.id] = g.tag));
       const meta = {
-        id: t.id, date: t.date, time: t.time, sr: t.sr, project: t.project, system: t.system, activity: t.activity,
+        id: t.id, engineer: t.engineer || "", date: t.date, time: t.time, sr: t.sr, project: t.project, system: t.system, activity: t.activity,
         witness: t.witness || settings.engineer, withMe: t.withMe || "", location: t.location || "", remarks: t.remarks, status: testStatus(t), summary: summaryText(t),
         tags: (t.tags || []).map((g) => ({ tag: g.tag, zone: g.zone, bundle: g.bundle, status: tagStatus(t, g), remarks: tagRemark(t, g), missingPhotos: shotProgress(t, g).missing })),
         photos: (t.photos || []).map((p, i) => ({ file: names[i], tag: p.tagId === FORM ? "Site test form" : tg[p.tagId] || "General", shot: p.shot || "", status: STATUS[p.status], issue: p.issue || "", comment: p.comment || "" })),
@@ -320,7 +324,8 @@
       zip.file(`${dir}/data.json`, JSON.stringify(meta, null, 2));
       zip.file(`${dir}/WhatsApp.txt`, "\ufeff" + whatsappText(t, settings).replace(/\n/g, "\r\n"));
     }
-    zip.file("Test_Log.xlsx", buildLogWorkbook(allTests, settings));
+    // team logs are built on the laptop (Team_Log.csv + Daily Status); only single-user mode still sends its own log
+    if (!settings.sheetName) zip.file("Test_Log.xlsx", buildLogWorkbook(allTests, settings));
     return zip.generateAsync({ type: isNode ? "nodebuffer" : "blob", compression: "STORE" });
   }
 

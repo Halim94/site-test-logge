@@ -203,6 +203,10 @@ function renderHome() {
   const byDay = {};
   [...TESTS].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)).forEach((t) => (byDay[t.date] ||= []).push(t));
   let h = "";
+  if (S.syncUrl && !S.sheetName) {
+    h += `<div class="card"><b>Who are you?</b><div class="muted">Pick your name once — the app then downloads your tests every morning.</div>
+      ${teamSelect("home-me")}<button class="btn block" id="home-me-ok" style="margin-top:10px">Save</button></div>`;
+  }
   if (S.syncUrl) {
     h += `<div class="sync-bar ${SYNC.state}" id="sync-bar">${esc(syncLabel())}</div>`;
     const empty = TESTS.filter((t) => !t.photos.length && !t.exportedAt).length;
@@ -210,7 +214,7 @@ function renderHome() {
       ${IS_DESKTOP ? `<button class="btn ghost" id="send-plans" style="flex:1" ${empty ? "" : "disabled"}>📲 Send ${empty} to phone</button>` : ""}</div>`;
   }
   else if (TESTS.length) h += `<div class="card"><b>Auto-sync is off</b><div class="muted">Add the sync link in Settings so tests go to the laptop by themselves.</div></div>`;
-  if (!S.engineer) h += `<div class="card"><b>First time?</b><div class="muted">Add your name and project in Settings — they go on every report.</div></div>`;
+  if (!S.engineer && !(S.syncUrl && !S.sheetName)) h += `<div class="card"><b>First time?</b><div class="muted">Add your name and project in Settings — they go on every report.</div></div>`;
   if (!TESTS.length) h += `<div class="empty">No tests yet.<br>Tap <b>New test</b> when you get today's invitation.</div>`;
   for (const [d, list] of Object.entries(byDay)) {
     const label = new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
@@ -227,6 +231,12 @@ function renderHome() {
   }
   $("#view").innerHTML = h;
   paintSync();
+  if ($("#home-me-ok")) $("#home-me-ok").onclick = async () => {
+    const v = $("#home-me").value;
+    if (!v) return toast("Choose your name");
+    applyMember(v); await kvSet("settings", S); toast(`Hi ${S.engineer || S.sheetName} 👋`); renderHome(); getPlans();
+  };
+  if (S.syncUrl && (!S.team || !S.team.length || Date.now() - (S.teamAt || 0) > 86400000)) loadTeam().then((ch) => { if (ch && route.name === "home") renderHome(); });
   if ($("#get-plans")) $("#get-plans").onclick = getPlans;
   if ($("#send-plans")) $("#send-plans").onclick = sendPlans;
   $("#view").onclick = (e) => { const b = e.target.closest("[data-open]"); if (b) go({ name: "test", id: b.dataset.open }); };
@@ -505,7 +515,10 @@ function renderSettings() {
   const ta = (k) => `<label>${k[0].toUpperCase() + k.slice(1)} list (one per line)</label><textarea id="s-${k}" rows="5">${esc((S[k] || []).join("\n"))}</textarea>`;
   $("#view").innerHTML = `
   <div class="card">
-    <label style="margin-top:0">Your name (as you want it in reports &amp; WhatsApp, e.g. Abdelhalim Tarik)</label><input id="s-engineer" value="${esc(S.engineer)}">
+    <label style="margin-top:0">Who are you? (team list)</label>${teamSelect("s-member")}
+    <div class="hint">Picking your name fills the two boxes below. Not in the list? Type them yourself.</div>
+    <label>Your name in reports &amp; WhatsApp (English)</label><input id="s-engineer" value="${esc(S.engineer)}">
+    <label>Your name as written in the invitation sheet</label><input id="s-sheetName" value="${esc(S.sheetName || "")}" placeholder="e.g. أحمد علي">
     <label>Project name (report subtitle)</label><input id="s-projectName" value="${esc(S.projectName)}" placeholder="e.g. Holy Haram Expansion">
     <div class="grid2">
       <div><label>Discipline</label><input id="s-discipline" value="${esc(S.discipline)}"></div>
@@ -536,8 +549,15 @@ function renderSettings() {
   };
   $("#s-ckreset").onclick = () => { $("#s-checklists").value = DEFAULTS.checklists; };
   $("#fab").innerHTML = `<button class="btn" id="s-ok">Save settings</button>`;
+  $("#s-member").onchange = (e) => {
+    const m = (S.team || []).find((x) => x.ar === e.target.value);
+    if (m) { $("#s-engineer").value = m.en || m.ar; $("#s-sheetName").value = m.ar; }
+  };
+  if (S.syncUrl) loadTeam().then((ch) => { if (ch && route.name === "settings") { const v = $("#s-member").value; $("#s-member").outerHTML = teamSelect("s-member"); renderSettings(); } });
   $("#s-ok").onclick = async () => {
-    ["engineer", "projectName", "discipline", "reportTitle"].forEach((k) => (S[k] = $("#s-" + k).value.trim()));
+    ["engineer", "sheetName", "projectName", "discipline", "reportTitle"].forEach((k) => (S[k] = $("#s-" + k).value.trim()));
+    const m = (S.team || []).find((x) => normName(x.ar) === normName(S.sheetName));
+    S.myAliases = m ? m.aliases || [] : [];
     S.purgeDays = Math.max(0, parseFloat($("#s-purgeDays").value) || 0);
     S.checklists = $("#s-checklists").value.trim();
     S.syncUrl = $("#s-syncUrl").value.trim(); S.syncKey = $("#s-syncKey").value.trim(); S.autoSync = $("#s-autoSync").checked;
@@ -680,16 +700,61 @@ async function syncNow(manual, onlyId) {
    JSON: { "tests": [ { date, sr, project, time, system, activity, witness, remarks,
                         tags: [ { tag, zone, bundle, qty } ] } ] }                     */
 const IS_DESKTOP = window.matchMedia && matchMedia("(pointer: fine)").matches && !/iPhone|iPad|Android/i.test(navigator.userAgent);
+// Arabic-friendly name matching: أحمد = احمد, spaces/diacritics ignored
+function normName(s) {
+  return String(s || "").replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+}
+function splitNames(s) { return String(s || "").split(/[,،\n&\/]+| و (?=\S)/).map((x) => x.trim()).filter(Boolean); }
+// ---- team list (kept on Google Drive, cached on the phone) ----
+async function loadTeam() {
+  if (!S.syncUrl || !navigator.onLine) return false;
+  try {
+    const r = await callSync(S.syncUrl, { key: S.syncKey, action: "team" });
+    if (!r.ok || !Array.isArray(r.members)) return false;
+    const changed = JSON.stringify(r.members) !== JSON.stringify(S.team || []);
+    S.team = r.members; S.teamAt = Date.now();
+    const m = S.sheetName && S.team.find((x) => normName(x.ar) === normName(S.sheetName));
+    if (m) S.myAliases = m.aliases || [];
+    await kvSet("settings", S);
+    return changed;
+  } catch { return false; }
+}
+function teamSelect(id) {
+  const list = [...(S.team || [])].sort((a, b) => (a.en || a.ar).localeCompare(b.en || b.ar));
+  if (!list.length) return `<select id="${id}" disabled><option value="">Team list not loaded yet (needs internet + sync link)</option></select>`;
+  return `<select id="${id}"><option value="">— Choose your name —</option>${list.map((m) =>
+    `<option value="${esc(m.ar)}"${normName(m.ar) === normName(S.sheetName) ? " selected" : ""}>${esc(m.en ? `${m.en} — ${m.ar}` : m.ar)}</option>`).join("")}</select>`;
+}
+function applyMember(ar) {
+  const m = (S.team || []).find((x) => x.ar === ar);
+  if (!m) return;
+  S.sheetName = m.ar; S.engineer = m.en || m.ar; S.myAliases = m.aliases || [];
+}
+
 async function getPlans() {
   if (!navigator.onLine) return toast("No internet");
   toast("Checking…", 1200);
   try {
     const r = await callSync(S.syncUrl, { key: S.syncKey, action: "plans" });
     if (!r.ok) throw new Error(r.error);
-    let added = 0, skipped = 0;
+    let added = 0, skipped = 0, notMine = 0;
+    const team = !!S.sheetName;   // team mode: only my rows, and plans stay on Drive for the others
+    const me = normName(S.sheetName);
+    const mine = new Set([S.sheetName, ...(S.myAliases || [])].map(normName));
     for (const pl of r.plans || []) {
       let data; try { data = JSON.parse(pl.content); } catch { continue; }
-      for (const x of data.tests || []) {
+      for (const x0 of data.tests || []) {
+        const names = x0.witnesses && x0.witnesses.length ? x0.witnesses : [x0.witness, ...splitNames(x0.withMe)].filter(Boolean);
+        let x = x0;
+        if (team) {
+          // the test belongs to the FIRST name in the witness cell; the others appear as "with me"
+          const first = normName(names[0]);
+          if (!(mine.has(first) || (me.length > 5 && first.includes(me)))) { notMine++; continue; }
+          x = { ...x0, witness: S.engineer || S.sheetName, withMe: names.filter((n) => !mine.has(normName(n))).join("، ") };
+        } else if (x0.witnesses && !x0.withMe) {
+          x = { ...x0, witness: names[0] || "", withMe: names.slice(1).join("، ") };
+        }
         const same = TESTS.find((t) => t.date === x.date && String(t.sr) === String(x.sr) && t.system === x.system);
         if (same) { skipped++; continue; }
         const tags = [];
@@ -699,9 +764,9 @@ async function getPlans() {
           activity: x.activity || "", witness: x.witness || S.engineer, withMe: x.withMe || "", location: x.location || "", remarks: x.remarks || "", tags, photos: [], shots: shotsFor(x.system), createdAt: Date.now() };
         TESTS.push(t); await dbPutTest(t); added++;
       }
-      await callSync(S.syncUrl, { key: S.syncKey, action: "delete", id: pl.id });
+      if (!team) await callSync(S.syncUrl, { key: S.syncKey, action: "delete", id: pl.id });
     }
-    toast(added ? `Added ${added} test(s) ✓${skipped ? ` (${skipped} already here)` : ""}` : skipped ? "Those tests are already here" : "No new tests waiting");
+    toast(added ? `Added ${added} test(s) ✓${skipped ? ` (${skipped} already here)` : ""}` : skipped ? "Your tests are already here" : team && notMine ? "No tests for you in today's sheet" : "No new tests waiting");
     render();
   } catch (e) { toast("Couldn't get tests: " + e.message, 4000); }
 }
