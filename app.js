@@ -233,7 +233,7 @@ function renderHome() {
       const ok = !needsExport(t);
       h += `<button class="card test" data-open="${t.id}">
         <div class="row" style="justify-content:space-between"><span class="t1">${esc(t.system || "Untitled test")}</span><span class="chip ${statusClass(st)}">${esc(st)}</span></div>
-        <div class="t2">${esc([t.sr ? "Sr. " + t.sr : "", t.project, t.time].filter(Boolean).join(" · "))}</div>
+        <div class="t2">${esc([t.sr ? "Sr. " + t.sr : "", t.project, t.time].filter(Boolean).join(" · "))}${t.sheetChanged ? ` <span class="chip Partial">sheet changed</span>` : ""}</div>
         <div class="t2">${t.tags.length} tag(s) · ${t.photos.length} photo(s) <span class="synced">${!hasWork(t) && !t.photosPurged ? "· ready to start" : t.photosPurged ? "· photos cleared from phone" : ok ? (S.syncUrl ? "· sent ✓" : "· exported ✓") : S.syncUrl ? "· waiting to sync" : "· not exported"}</span></div>
       </button>`;
     }
@@ -747,7 +747,7 @@ async function getPlans() {
   try {
     const r = await callSync(S.syncUrl, { key: S.syncKey, action: "plans" });
     if (!r.ok) throw new Error(r.error);
-    let added = 0, skipped = 0, notMine = 0;
+    let added = 0, skipped = 0, notMine = 0, updated = 0, flagged = 0, removed = 0;
     const team = !!S.sheetName;   // team mode: only my rows, and plans stay on Drive for the others
     const me = normName(S.sheetName);
     const mine = new Set([S.sheetName, ...(S.myAliases || [])].map(normName));
@@ -759,23 +759,44 @@ async function getPlans() {
         if (team) {
           // the test belongs to the FIRST name in the witness cell; the others appear as "with me"
           const first = normName(names[0]);
-          if (!(mine.has(first) || (me.length > 5 && first.includes(me)))) { notMine++; continue; }
+          if (!(mine.has(first) || (me.length > 5 && first.includes(me)))) {
+            notMine++;
+            // the row was moved to someone else and I haven't started it -> remove my copy
+            const was = TESTS.find((t) => t.date === x0.date && String(t.sr) === String(x0.sr) && t.system === x0.system && t.planSig && !hasWork(t));
+            if (was) { TESTS = TESTS.filter((t) => t !== was); await dbDelTest(was.id); removed++; }
+            continue;
+          }
           x = { ...x0, witness: S.engineer || S.sheetName, withMe: names.filter((n) => !mine.has(normName(n))).join("، ") };
         } else if (x0.witnesses && !x0.withMe) {
           x = { ...x0, witness: names[0] || "", withMe: names.slice(1).join("، ") };
         }
+        const sig = JSON.stringify([x.time, x.project, x.activity, x.withMe, x.remarks, x.tags]);
+        const mkTags = () => {
+          const tags = [];
+          for (const g of x.tags || []) for (const u of expandTag(String(g.tag || "").trim(), parseInt(g.qty, 10) || 1))
+            tags.push({ id: uid(), tag: u, zone: g.zone || "", bundle: g.bundle || "", status: "", remark: "" });
+          return tags;
+        };
         const same = TESTS.find((t) => t.date === x.date && String(t.sr) === String(x.sr) && t.system === x.system);
-        if (same) { skipped++; continue; }
-        const tags = [];
-        for (const g of x.tags || []) for (const u of expandTag(String(g.tag || "").trim(), parseInt(g.qty, 10) || 1))
-          tags.push({ id: uid(), tag: u, zone: g.zone || "", bundle: g.bundle || "", status: "", remark: "" });
+        if (same) {
+          if (same.planSig === sig) { skipped++; continue; }
+          if (!hasWork(same)) {           // the sheet was edited and I haven't started -> take the new version
+            Object.assign(same, { project: x.project || "", time: x.time || "", activity: x.activity || "", withMe: x.withMe || "",
+              remarks: x.remarks || "", tags: mkTags(), planSig: sig, sheetChanged: false });
+            await dbPutTest(same); updated++;
+          } else if (!same.sheetChanged) { // already working on it -> don't touch, just flag it
+            same.sheetChanged = true; same.planSig = sig; await dbPutTest(same); flagged++;
+          } else skipped++;
+          continue;
+        }
         const t = { id: uid(), date: x.date || today(), sr: String(x.sr ?? ""), project: x.project || "", time: x.time || "", system: x.system || "",
-          activity: x.activity || "", witness: x.witness || S.engineer, withMe: x.withMe || "", location: x.location || "", remarks: x.remarks || "", tags, photos: [], shots: shotsFor(x.system), createdAt: Date.now() };
+          activity: x.activity || "", witness: x.witness || S.engineer, withMe: x.withMe || "", location: x.location || "", remarks: x.remarks || "", tags: mkTags(), photos: [], shots: shotsFor(x.system), createdAt: Date.now(), planSig: sig };
         TESTS.push(t); await dbPutTest(t); added++;
       }
       if (!team) await callSync(S.syncUrl, { key: S.syncKey, action: "delete", id: pl.id });
     }
-    toast(added ? `Added ${added} test(s) ✓${skipped ? ` (${skipped} already here)` : ""}` : skipped ? "Your tests are already here" : team && notMine ? "No tests for you in today's sheet" : "No new tests waiting");
+    const bits = [added && `${added} new`, updated && `${updated} updated from the sheet`, removed && `${removed} moved to someone else`, flagged && `${flagged} changed in the sheet after you started — check them`].filter(Boolean);
+    toast(bits.length ? bits.join(" · ") + " ✓" : skipped ? "Your tests are already here" : team && notMine ? "No tests for you in today's sheet" : "No new tests waiting", bits.length ? 4000 : 2600);
     render();
   } catch (e) { toast("Couldn't get tests: " + e.message, 4000); }
 }
