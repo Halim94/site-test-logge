@@ -154,7 +154,16 @@ let captureTarget = null; // { testId, tagId, shot }
 // mode: "cam" = camera straight away, "lib" = photo library (multi-select), "any" = iPhone asks Take Photo / Photo Library
 function capture(testId, tagId, mode, shot) {
   captureTarget = { testId, tagId, shot: shot || "" };
-  const inp = mode === true || mode === "lib" ? $("#pick") : mode === "any" ? $("#any") : $("#cam");
+  if (mode === "any") {
+    // our own choice sheet: Android's photo picker hides the camera, and some phones show nothing at all
+    const bg = sheet(`<b>${esc(shot || "Add photo")}</b><div class="row" style="margin-top:12px;gap:10px">
+      <button class="btn" id="cap-cam" style="flex:1;padding:16px">📷 Camera</button>
+      <button class="btn ghost" id="cap-lib" style="flex:1;padding:16px">🖼 Gallery</button></div>`);
+    bg.querySelector("#cap-cam").onclick = () => { bg.remove(); const i = $("#cam"); i.value = ""; i.click(); };
+    bg.querySelector("#cap-lib").onclick = () => { bg.remove(); const i = $("#pick"); i.value = ""; i.click(); };
+    return;
+  }
+  const inp = mode === true || mode === "lib" ? $("#pick") : $("#cam");
   inp.value = ""; inp.click();
 }
 async function onFiles(e) {
