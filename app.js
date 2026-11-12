@@ -443,18 +443,61 @@ async function renderTest(id, keepScroll) {
 
 async function shareSummary(t) {
   const text = Report.whatsappText(t, S);
-  const bg = sheet(`<b>Summary</b><textarea id="sum-t" rows="${Math.min(16, text.split("\n").length + 2)}" style="margin-top:10px;font-size:14px">${esc(text)}</textarea>
+  // photos to pick (forms last); cleared photos are skipped
+  const list = [];
+  for (const p of [...t.photos].sort((a, b) => isFormP(a) - isFormP(b))) { const u = await photoURL(p.id); if (u) list.push({ p, u }); }
+  const tagOf = (p) => { const g = t.tags.find((x) => x.id === p.tagId); return isFormP(p) ? "Form" : g ? g.tag : "General"; };
+  const bg = sheet(`<b>Summary</b><textarea id="sum-t" rows="${Math.min(14, text.split("\n").length + 2)}" style="margin-top:10px;font-size:14px">${esc(text)}</textarea>
     <div class="hint">You can edit it before sending.</div>
+    ${list.length ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px"><b>Add photos <span id="sum-n" class="muted"></span></b><button class="btn ghost" id="sum-none" style="padding:4px 10px;font-size:13px">Clear</button></div>
+    <div class="thumbs" id="sum-ph">${list.map(({ p, u }) => `<button class="thumb" data-pick="${p.id}" style="outline-offset:-3px"><img src="${u}" alt="" style="width:100%;height:100%;max-height:none;object-fit:cover;border-radius:0">
+      <span class="cap">${esc(tagOf(p))}${p.shot && !isFormP(p) ? " · " + esc(p.shot) : ""}</span><b class="ck" style="display:none;position:absolute;top:4px;left:4px;background:#1f9d55;color:#fff;border-radius:50%;width:22px;height:22px;line-height:22px;font-size:13px;text-align:center">✓</b></button>`).join("")}</div>` : ""}
     <div class="row" style="margin-top:12px"><button class="btn ghost" id="sum-copy" style="flex:1">Copy</button><button class="btn" id="sum-wa" style="flex:1;background:#1f9d55">Send to WhatsApp</button></div>`);
   const val = () => bg.querySelector("#sum-t").value;
-  bg.querySelector("#sum-copy").onclick = async () => {
-    try { await navigator.clipboard.writeText(val()); toast("Copied ✓"); }
-    catch { bg.querySelector("#sum-t").select(); document.execCommand("copy"); toast("Copied ✓"); }
+  const picked = new Set();
+  const paint = () => {
+    bg.querySelectorAll("[data-pick]").forEach((b) => { const on = picked.has(b.dataset.pick); b.style.outline = on ? "3px solid #1f9d55" : "none"; b.querySelector(".ck").style.display = on ? "block" : "none"; });
+    const n = bg.querySelector("#sum-n"); if (n) n.textContent = picked.size ? `(${picked.size} selected)` : "(tap to select)";
   };
+  paint();
+  bg.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => { const id = b.dataset.pick; picked.has(id) ? picked.delete(id) : picked.add(id); paint(); }));
+  const none = bg.querySelector("#sum-none"); if (none) none.onclick = () => { picked.clear(); paint(); };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(val()); return true; }
+    catch { try { bg.querySelector("#sum-t").select(); document.execCommand("copy"); return true; } catch { return false; } }
+  };
+  bg.querySelector("#sum-copy").onclick = async () => { if (await copy()) toast("Copied ✓"); };
   bg.querySelector("#sum-wa").onclick = async () => {
+    if (picked.size) {
+      const files = [];
+      let i = 0;
+      for (const { p } of list) {
+        if (!picked.has(p.id)) continue;
+        const buf = await getPhotoShare(p.id); if (!buf) continue;
+        const name = `${++i}_${tagOf(p)}${p.shot && !isFormP(p) ? "_" + p.shot : ""}`.replace(/[^\w\u0600-\u06FF-]+/g, "_").slice(0, 60) + ".jpg";
+        files.push(new File([buf], name, { type: "image/jpeg" }));
+      }
+      if (!navigator.canShare || !navigator.canShare({ files })) return toast("This phone can't share photos from here — send the text, then attach the photos from WhatsApp", 4500);
+      await copy();   // WhatsApp sometimes drops the text when photos are attached -> it's on the clipboard to paste as caption
+      try { await navigator.share({ files, text: val() }); toast("If the text is missing, paste it as the caption (it's copied)", 4500); }
+      catch (e) { if (e.name !== "AbortError") toast("Couldn't share: " + e.message, 4000); }
+      return;
+    }
     if (navigator.share) { try { await navigator.share({ text: val() }); return; } catch (e) { if (e.name === "AbortError") return; } }
     location.href = "https://wa.me/?text=" + encodeURIComponent(val());
   };
+}
+// WhatsApp-size copy of a photo (long side 1600 px)
+async function getPhotoShare(id) {
+  const b = await dbGetPhoto(id);
+  if (!b) return null;
+  try {
+    const img = await new Promise((res, rej) => { const u = URL.createObjectURL(b); const im = new Image(); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = rej; im.src = u; });
+    const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise((r) => c.toBlob(r, "image/jpeg", 0.82));
+  } catch { return b; }
 }
 
 function sheet(html) {
