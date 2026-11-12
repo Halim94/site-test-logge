@@ -394,7 +394,8 @@ async function renderTest(id, keepScroll) {
     <div class="thumbs">${await thumbs(FORM)}</div></div>`;
   h += `<div class="card"><b>General photos</b><div class="hint">Not linked to a specific tag.</div><div class="thumbs">${await thumbs("")}</div></div>`;
   if (S.syncUrl && !t.photosPurged) h += needsExport(t)
-    ? `<button class="btn block" id="t-sync" style="margin:4px 0 14px;padding:15px;background:var(--pass)">✓ Finished — sync this test</button>`
+    ? `<button class="btn block" id="t-sync" style="margin:4px 0 6px;padding:15px;background:var(--pass)">✓ Finished — sync this test</button>`
+      + (t.exportedAt ? `<button class="btn ghost block" id="t-nosync" style="margin:0 0 14px">No changes — already synced</button>` : `<div style="height:8px"></div>`)
     : `<div class="sync-bar" style="text-align:center">☁︎ Sent ✓${t.exportedAt ? " · " + new Date(t.exportedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}. On the laptop within 5 min. Any later change needs another sync.</div>`;
   if (t.photosPurged) h += `<div class="muted" style="text-align:center">Photos were cleared from the phone ${S.purgeDays} day(s) after export. They're on the laptop.</div>`;
   $("#view").innerHTML = h;
@@ -402,6 +403,7 @@ async function renderTest(id, keepScroll) {
 
   $("#view").onclick = async (e) => {
     if (e.target.id === "t-share") return shareSummary(t);
+    if (e.target.id === "t-nosync") { t.updatedAt = t.exportedAt; await dbPutTest(t); toast("OK — marked as synced"); return renderTest(t.id, true); }
     if (e.target.id === "t-sync") {
       const miss = t.tags.reduce((n, g) => n + t.shots.filter((s) => !t.photos.some((p) => p.tagId === g.id && p.shot === s)).length, 0);
       const noForm = t.tags.filter((g) => !t.photos.some((p) => p.tagId === g.id && p.shot === FORM_SHOT)).length;
@@ -420,12 +422,13 @@ async function renderTest(id, keepScroll) {
     const sb = e.target.closest(".seg button");
     if (sb) {
       const g = t.tags.find((x) => x.id === sb.parentElement.dataset.tag);
-      g.status = sb.dataset.st; await save(t); renderTest(t.id, true);
+      if (g.status !== sb.dataset.st) { g.status = sb.dataset.st; await save(t); } renderTest(t.id, true);
     }
   };
   $("#view").onchange = async (e) => {
     if (e.target.classList.contains("remark")) {
-      t.tags.find((x) => x.id === e.target.dataset.tag).remark = e.target.value.trim(); await save(t);
+      const g = t.tags.find((x) => x.id === e.target.dataset.tag), v = e.target.value.trim();
+      if (g.remark !== v) { g.remark = v; await save(t); }
     }
   };
   $("#fab").innerHTML = t.photosPurged ? "" :
@@ -543,11 +546,14 @@ async function openPhoto(testId, photoId, isNew) {
     bg.querySelector("#p-iss-wrap").hidden = status === "A";
   };
   const commit = async () => {
+    const before = JSON.stringify([p.tagId, p.status, p.shot, p.issue, p.comment]);
     p.tagId = bg.querySelector("#p-tag").value; p.status = status;
     p.shot = p.tagId === FORM ? FORM_SHOT : bg.querySelector("#p-shot").value;
     p.issue = status === "A" ? "" : bg.querySelector("#p-iss").value;
     p.comment = bg.querySelector("#p-cmt").value.trim();
-    await save(t); bg.remove(); renderTest(t.id, true);
+    // just opening and closing a photo is not a change -> don't ask for a new sync
+    if (isNew || JSON.stringify([p.tagId, p.status, p.shot, p.issue, p.comment]) !== before) await save(t);
+    bg.remove(); renderTest(t.id, true);
   };
   bg.querySelector("#p-ok").onclick = commit;
   if (isNew) bg.querySelector("#p-more").onclick = async () => {
