@@ -450,7 +450,7 @@ async function shareSummary(t) {
   const list = [];
   for (const p of [...t.photos].sort((a, b) => isFormP(a) - isFormP(b))) { const u = await photoURL(p.id); if (u) list.push({ p, u }); }
   const tagOf = (p) => { const g = t.tags.find((x) => x.id === p.tagId); return isFormP(p) ? "Form" : g ? g.tag : "General"; };
-  const bg = sheet(`<b>Summary</b><textarea id="sum-t" rows="${Math.min(14, text.split("\n").length + 2)}" style="margin-top:10px;font-size:14px">${esc(text)}</textarea>
+  const bg = sheet(`<b>Summary</b><textarea id="sum-t" rows="${Math.min(8, text.split("\n").length + 1)}" style="margin-top:10px;font-size:14px">${esc(text)}</textarea>
     <div class="hint">You can edit it before sending.</div>
     ${list.length ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px"><b>Add photos <span id="sum-n" class="muted"></span></b><button class="btn ghost" id="sum-none" style="padding:4px 10px;font-size:13px">Clear</button></div>
     <div class="thumbs" id="sum-ph">${list.map(({ p, u }) => `<button class="thumb" data-pick="${p.id}" style="outline-offset:-3px"><img src="${u}" alt="" style="width:100%;height:100%;max-height:none;object-fit:cover;border-radius:0">
@@ -505,7 +505,10 @@ async function getPhotoShare(id) {
 
 function sheet(html) {
   const bg = document.createElement("div");
-  bg.className = "sheet-bg"; bg.innerHTML = `<div class="sheet">${html}</div>`;
+  bg.className = "sheet-bg";
+  // ✕ close button on every pop-up (long ones fill the screen, so tapping outside isn't possible)
+  bg.innerHTML = `<div class="sheet"><div style="position:sticky;top:-14px;z-index:5;height:0;text-align:right"><button class="sheet-x" aria-label="Close" style="margin-top:-4px;width:34px;height:34px;border-radius:50%;border:0;background:rgba(120,120,128,.25);font-size:17px;font-weight:700;color:inherit">✕</button></div>${html}</div>`;
+  bg.querySelector(".sheet-x").addEventListener("click", (e) => { e.stopPropagation(); bg.remove(); });
   bg.onclick = (e) => { if (e.target === bg) bg.remove(); };
   document.body.appendChild(bg);
   return bg;
