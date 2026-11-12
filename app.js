@@ -751,8 +751,18 @@ async function getPlans() {
     const team = !!S.sheetName;   // team mode: only my rows, and plans stay on Drive for the others
     const me = normName(S.sheetName);
     const mine = new Set([S.sheetName, ...(S.myAliases || [])].map(normName));
-    for (const pl of r.plans || []) {
-      let data; try { data = JSON.parse(pl.content); } catch { continue; }
+    // several publishes of the same day's sheet can be on Drive -> use only the NEWEST one per date
+    const parsed = [];
+    for (const pl of r.plans || []) { try { parsed.push({ pl, data: JSON.parse(pl.content) }); } catch {} }
+    const newest = {};
+    for (const p of parsed) {
+      if (!/_xlsx_/.test(p.pl.name || "") || !p.data.rev) continue;
+      const d = (p.data.tests && p.data.tests[0] && p.data.tests[0].date) || "";
+      if (!newest[d] || p.data.rev > newest[d].data.rev) newest[d] = p;
+    }
+    const use = parsed.filter((p) => !/_xlsx_/.test(p.pl.name || "") || !p.data.rev ||
+      newest[(p.data.tests && p.data.tests[0] && p.data.tests[0].date) || ""] === p);
+    for (const { pl, data } of use) {
       for (const x0 of data.tests || []) {
         const names = x0.witnesses && x0.witnesses.length ? x0.witnesses : [x0.witness, ...splitNames(x0.withMe)].filter(Boolean);
         let x = x0;
