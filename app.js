@@ -195,9 +195,44 @@ $("#back").onclick = () => {
   if (route.name === "test" && route.edit) go({ name: "test", id: route.id });
   else go({ name: "home" });
 };
-function setHeader(title, back, right = "") {
+function setHeader(title, back, right = "", large = false) {
   $("#title").textContent = title; $("#back").hidden = !back; $("#hdr-right").innerHTML = right;
+  $("#back").textContent = route.name === "test" && route.edit ? "‹ Test" : "‹ Today";
+  document.querySelector("header").classList.toggle("small", !large);
 }
+window.addEventListener("scroll", () => document.querySelector("header").classList.toggle("scrolled", window.scrollY > 30), { passive: true });
+
+// one icon per kind of test: colour = discipline, shape = equipment
+const ICONS = [
+  [/mist|securifire/i, "#FF453A", '<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5.5 1.5 1.5 2.5 3 2.5-1-3 0-5 0-7z"/>'],
+  [/clean.*(hose|cabinet)|chr/i, "#32ADE6", '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M12 8v8M9.5 13.5l2.5 2.5 2.5-2.5"/>'],
+  [/fhc|fire hose|hose cabinet|hose reel/i, "#FF453A", '<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.2"/>'],
+  [/sprinkler|deluge|alarm valve|pre-?action/i, "#FF453A", '<path d="M12 4v5M7 9h10l-1 4H8z"/><path d="M8 16v.5M12 16v2M16 16v.5M10 19v.5M14 19v.5"/>'],
+  [/zone control|zcv|valve/i, "#FF453A", '<path d="M4 12h5M15 12h5"/><path d="M9 8v8l6-8v8z"/><path d="M12 8V4M10 4h4"/>'],
+  [/fire|ff\b|foam|fm-?200|suppression/i, "#FF453A", '<path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5.5 1.5 1.5 2.5 3 2.5-1-3 0-5 0-7z"/>'],
+  [/ahu|air handling|fahu|pau|makeup air/i, "#0A84FF", '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="9" cy="12" r="3"/><path d="M15 9.5h3M15 12h3M15 14.5h3"/>'],
+  [/fcu|fan coil/i, "#0A84FF", '<rect x="3" y="7" width="18" height="8" rx="2"/><path d="M7 18l1-2M12 19v-3M17 18l-1-2"/>'],
+  [/fan|ventilat|exhaust|jet|smoke/i, "#0A84FF", '<circle cx="12" cy="12" r="1.6"/><path d="M12 10.4c0-3 1-6 3.5-6.4M13.4 12.8c2.6 1.5 4.6 4 3.6 6.3M10.6 12.8c-2.6 1.5-5.6 1.6-6.9-.6"/>'],
+  [/vav|damper|duct|diffuser|air side|\btab\b/i, "#0A84FF", '<path d="M3 9h12a3 3 0 1 0-3-3M3 13h16a3 3 0 1 1-3 3M3 17h7"/>'],
+  [/chiller|cooling tower|condens|split|vrf|dx|crac/i, "#30D158", '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M9.5 4.5 12 6l2.5-1.5M9.5 19.5 12 18l2.5 1.5"/>'],
+  [/pump|booster|submersible|sump/i, "#32ADE6", '<circle cx="10" cy="13" r="6"/><circle cx="10" cy="13" r="2"/><path d="M16 13h5M10 7V3h4"/>'],
+  [/pv|solar|photovolt/i, "#32ADE6", '<rect x="4" y="5" width="16" height="11" rx="1"/><path d="M4 10.5h16M9.3 5v11M14.7 5v11M7 19l1.5-1.5M12 20v-2M17 19l-1.5-1.5"/>'],
+  [/trap|drain|plumb|water|tank|heater|irrigation|ablution/i, "#32ADE6", '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>'],
+  [/fuel|diesel|generator|gas/i, "#FF9F0A", '<path d="M6 21V5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v16M4 21h13M9 7h3M15 9l3 2v6a1.5 1.5 0 0 0 3 0V9l-2-2"/>'],
+  [/bms|dcp|ddc|panel|control|i\/o|scada|mcc|vfd/i, "#5E5CE6", '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h3M8 13h3M8 17h3M14 9h2M14 13h2"/><circle cx="16" cy="17" r="1"/>'],
+];
+function iconFor(system, extra = "") {
+  const m = ICONS.find(([re]) => re.test(system || ""));
+  const [c, path] = m ? [m[1], m[2]] : ["#8E8E93", '<path d="M14.5 5.5a4 4 0 0 0-5 5L4 16l4 4 5.5-5.5a4 4 0 0 0 5-5L16 12l-4-4z"/>'];
+  return `<span class="ico" style="${extra}background:${c}"><svg viewBox="0 0 24 24">${path}</svg></span>`;
+}
+const TAB_ICONS = {
+  tests: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>',
+  add: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>',
+  sync: '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5"/><path d="M12 12v8M9 15l3-3 3 3"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/>',
+};
+const svgI = (k) => `<svg viewBox="0 0 24 24">${TAB_ICONS[k]}</svg>`;
 function render() {
   if (route.name === "home") renderHome();
   else if (route.name === "test") route.edit ? renderEdit(route.id) : renderTest(route.id);
@@ -205,41 +240,47 @@ function render() {
 }
 
 /* ---------------- Home ---------------- */
+let HOME_FILTER = "today";
 function renderHome() {
-  setHeader("Site Test Logger", false, `<button id="gear">Settings</button>`);
-  $("#gear").onclick = () => go({ name: "settings" });
+  setHeader("Today", false, S.syncUrl ? `<button id="get-plans">⬇ Get today's tests</button>` : "", true);
   const pending = TESTS.filter(needsExport).length;
+  const td = today(), weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const shown = TESTS.filter((t) => HOME_FILTER === "all" || (HOME_FILTER === "week" ? t.date >= weekAgo : t.date === td) || needsExport(t));
   const byDay = {};
-  [...TESTS].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)).forEach((t) => (byDay[t.date] ||= []).push(t));
-  let h = "";
+  [...shown].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)).forEach((t) => (byDay[t.date] ||= []).push(t));
+  const dl = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
+  let h = `<div class="big">${HOME_FILTER === "today" ? "Today" : HOME_FILTER === "week" ? "This Week" : "All Tests"}</div>
+    <div class="bigsub">${esc(dl)}${S.engineer ? " · " + esc(S.engineer) : ""}</div>
+    <div class="seg" id="home-seg"><button data-f="today" class="${HOME_FILTER === "today" ? "on" : ""}">Today</button><button data-f="week" class="${HOME_FILTER === "week" ? "on" : ""}">This week</button><button data-f="all" class="${HOME_FILTER === "all" ? "on" : ""}">All</button></div>`;
   if (S.syncUrl && !S.sheetName) {
-    h += `<div class="card"><b>Who are you?</b><div class="muted">Pick your name once — the app then downloads your tests every morning.</div>
-      ${teamSelect("home-me")}<button class="btn block" id="home-me-ok" style="margin-top:10px">Save</button></div>`;
+    h += `<div class="sec">Who are you?</div><div class="card"><div class="muted">Pick your name once — the app then downloads your tests every morning.</div>
+      <div style="margin-top:10px">${teamSelect("home-me")}</div><button class="btn block" id="home-me-ok" style="margin-top:10px">Save</button></div>`;
   }
   if (S.syncUrl) {
-    h += `<div class="sync-bar ${SYNC.state}" id="sync-bar">${esc(syncLabel())}</div>`;
+    h += `<div class="sec">Sync</div><div class="sync-bar ${SYNC.state}" id="sync-bar">${esc(syncLabel())}</div>`;
     const empty = TESTS.filter((t) => !t.photos.length && !t.exportedAt).length;
-    h += `<div class="row" style="margin-bottom:12px"><button class="btn ghost" id="get-plans" style="flex:1">⬇ Get today's tests</button>
-      ${IS_DESKTOP ? `<button class="btn ghost" id="send-plans" style="flex:1" ${empty ? "" : "disabled"}>📲 Send ${empty} to phone</button>` : ""}</div>`;
+    if (IS_DESKTOP) h += `<button class="btn ghost block" id="send-plans" style="margin-top:8px" ${empty ? "" : "disabled"}>📲 Send ${empty} to phone</button>`;
   }
-  else if (TESTS.length) h += `<div class="card"><b>Auto-sync is off</b><div class="muted">Add the sync link in Settings so tests go to the laptop by themselves.</div></div>`;
-  if (!S.engineer && !(S.syncUrl && !S.sheetName)) h += `<div class="card"><b>First time?</b><div class="muted">Add your name and project in Settings — they go on every report.</div></div>`;
-  if (!TESTS.length) h += `<div class="empty">No tests yet.<br>Tap <b>New test</b> when you get today's invitation.</div>`;
+  else if (TESTS.length) h += `<div class="sec">Sync</div><div class="card"><b>Auto-sync is off</b><div class="muted">Add the sync link in Settings so tests go to the laptop by themselves.</div></div>`;
+  if (!S.engineer && !(S.syncUrl && !S.sheetName)) h += `<div class="card" style="margin-top:14px"><b>First time?</b><div class="muted">Add your name and project in Settings — they go on every report.</div></div>`;
+  if (!shown.length) h += `<div class="empty">${TESTS.length ? "No tests here." : "No tests yet."}<br>${S.syncUrl ? "Tap <b>Get today's tests</b> above, or " : "Tap "}<b>New Test</b> below.</div>`;
   for (const [d, list] of Object.entries(byDay)) {
-    const label = new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
-    h += `<div class="day">${d === today() ? "Today · " : ""}${esc(label)}</div>`;
+    const label = new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
+    h += `<div class="sec">${d === td ? "Today · " : ""}${esc(label)}</div><div class="group" style="--inset:58px">`;
     for (const t of list) {
       const st = Report.testStatus(t);
       const ok = !needsExport(t);
-      h += `<button class="card test" data-open="${t.id}">
-        <div class="row" style="justify-content:space-between"><span class="t1">${esc(t.system || "Untitled test")}</span><span class="chip ${statusClass(st)}">${esc(st)}</span></div>
-        <div class="t2">${esc([t.sr ? "Sr. " + t.sr : "", t.project, t.time].filter(Boolean).join(" · "))}${t.sheetChanged ? ` <span class="chip Partial">sheet changed</span>` : ""}</div>
-        <div class="t2">${t.tags.length} tag(s) · ${t.photos.length} photo(s) <span class="synced">${!hasWork(t) && !t.photosPurged ? "· ready to start" : t.photosPurged ? "· photos cleared from phone" : ok ? (S.syncUrl ? "· sent ✓" : "· exported ✓") : S.syncUrl ? "· waiting to sync" : "· not exported"}</span></div>
-      </button>`;
+      const state = !hasWork(t) && !t.photosPurged ? "not started" : t.photosPurged ? "photos cleared" : ok ? (S.syncUrl ? "sent ✓" : "exported ✓") : S.syncUrl ? "waiting to sync" : "not exported";
+      h += `<button class="cell test" data-open="${t.id}">${iconFor(t.system)}
+        <div class="main"><div class="t1">${esc(t.system || "Untitled test")}</div>
+        <div class="t2">${esc([t.sr ? "Sr " + t.sr : "", t.project, t.time].filter(Boolean).join(" · "))}${t.photos.length ? ` · ${t.photos.length} photos` : ""} · <span style="${ok || !hasWork(t) ? "" : "color:var(--cmt)"}">${state}</span>${t.sheetChanged ? ` · <span style="color:var(--cmt)">sheet changed</span>` : ""}</div></div>
+        <span class="chip ${statusClass(st)}">${esc(st)}</span><span class="chev">›</span></button>`;
     }
+    h += `</div>`;
   }
   $("#view").innerHTML = h;
   paintSync();
+  $("#home-seg").onclick = (e) => { const b = e.target.closest("[data-f]"); if (b) { HOME_FILTER = b.dataset.f; renderHome(); } };
   if ($("#home-me-ok")) $("#home-me-ok").onclick = async () => {
     const v = $("#home-me").value;
     if (!v) return toast("Choose your name");
@@ -249,9 +290,12 @@ function renderHome() {
   if ($("#get-plans")) $("#get-plans").onclick = getPlans;
   if ($("#send-plans")) $("#send-plans").onclick = sendPlans;
   $("#view").onclick = (e) => { const b = e.target.closest("[data-open]"); if (b) go({ name: "test", id: b.dataset.open }); };
-  $("#fab").innerHTML = `<button class="btn ghost" id="exp" ${pending ? "" : "disabled"}>${S.syncUrl ? "Sync now" : "Export"} (${pending})</button><button class="btn" id="new">+ New test</button>`;
+  $("#fab").className = "fab glass tabbar";
+  $("#fab").innerHTML = `<button class="on">${svgI("tests")}Tests</button><button id="new">${svgI("add")}New Test</button>
+    <button id="exp" ${pending ? "" : "disabled"}>${pending ? `<span class="badge">${pending}</span>` : ""}${svgI("sync")}${S.syncUrl ? "Sync" : "Export"}</button><button id="tab-set">${svgI("gear")}Settings</button>`;
   $("#new").onclick = newTest;
   $("#exp").onclick = () => (S.syncUrl ? syncNow(true) : doExport(false));
+  $("#tab-set").onclick = () => go({ name: "settings" });
 }
 
 async function newTest() {
@@ -302,7 +346,7 @@ function renderEdit(id) {
   </div>
   <div class="card"><label style="margin-top:0">General remarks</label><textarea id="f-remarks">${esc(t.remarks)}</textarea></div>
   <button class="btn danger block" id="del">Delete test</button>`;
-  $("#fab").innerHTML = `<button class="btn" id="ok">Save</button>`;
+  $("#fab").className = "fab glass"; $("#fab").innerHTML = `<button class="btn" id="ok">Save</button>`;
   $("#ok").onclick = async () => {
     const v = (k) => $("#f-" + k).value.trim();
     ["date", "time", "sr", "project", "system", "activity", "witness", "withMe", "location", "remarks"].forEach((k) => (t[k] = v(k)));
@@ -342,7 +386,7 @@ async function renderTest(id, keepScroll) {
   const t = TESTS.find((x) => x.id === id); if (!t) return go({ name: "home" });
   if (!t.shots) { t.shots = shotsFor(t.system); await dbPutTest(t); }
   const y = window.scrollY;
-  setHeader(t.system || "Test", true, `<button id="edit">Edit</button>`);
+  setHeader(t.sr ? "Sr " + t.sr : t.system || "Test", true, `<button id="edit">Edit</button>`, true);
   $("#edit").onclick = () => go({ name: "test", id, edit: true });
   const st = Report.testStatus(t);
   const thumbs = async (tagId) => {
@@ -358,22 +402,24 @@ async function renderTest(id, keepScroll) {
     if (!t.shots.length) return "";
     const ps = t.photos.filter((p) => p.tagId === g.id);
     const done = t.shots.filter((s) => ps.some((p) => p.shot === s)).length;
-    return `<div class="shots-h">Photos ${done}/${t.shots.length}</div><div class="shots">${t.shots.map((s) => {
+    return `<div class="shots-h">Photo checklist · ${done} of ${t.shots.length}</div><div class="shots">${t.shots.map((s) => {
       const p = ps.filter((x) => x.shot === s);
       const cls = !p.length ? "" : p.some((x) => x.status === "R") ? "R" : p.some((x) => x.status === "C") ? "C" : "A";
-      return `<button class="shot ${cls ? "done " + cls : ""}" data-shot="${esc(s)}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}>${cls ? "✓ " : ""}${esc(s)}</button>`;
+      return `<button class="shot ${cls ? "done " + cls : ""}" data-shot="${esc(s)}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}><span class="ck"></span>${esc(s)}</button>`;
     }).join("")}</div>`;
   };
   const formRow = (g) => {
     const n = t.photos.filter((p) => p.tagId === g.id && p.shot === FORM_SHOT).length;
-    return `<div class="shots" style="margin-top:8px"><button class="shot ${n ? "done A" : "form-missing"}" data-shot="${FORM_SHOT}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}>📄 ${n ? `Site test form ✓ ${n} page(s) · add page` : "Site test form — add photo"}</button></div>`;
+    return `<div class="shots"><button class="shot ${n ? "done A" : "form-missing"}" data-shot="${FORM_SHOT}" data-tg="${g.id}" ${t.photosPurged ? "disabled" : ""}><span class="ck"></span>${n ? `Site test form · ${n} page(s)` : "Site test form"}</button></div>`;
   };
   const formN = t.photos.filter((p) => p.tagId === FORM).length;
-  let h = `<div class="card">
-    <div class="row" style="justify-content:space-between"><b>${esc(t.project || "")}</b><span class="chip ${statusClass(st)}">${esc(st)}</span></div>
-    <div class="muted">${esc([t.date, t.time, t.sr ? "Sr. " + t.sr : "", t.activity].filter(Boolean).join(" · "))}</div>
-    <button class="btn ghost block" id="t-share" style="margin-top:10px">💬 Share summary (WhatsApp)</button>
-  </div>`;
+  let h = `<div class="row" style="flex-wrap:nowrap;align-items:flex-start;gap:12px;margin:0 4px 2px">${iconFor(t.system, "width:40px;height:40px;border-radius:10px;margin-top:4px;")}
+      <div class="big mid" style="margin:0">${esc(t.system || "Untitled test")}</div></div>
+    <div class="bigsub">${esc([t.project, t.date, t.time, t.activity].filter(Boolean).join(" · "))}${t.withMe ? " · with " + esc(t.withMe) : ""}</div>
+    <div class="group">
+      <div class="cell" style="cursor:default"><div class="main">Result</div><span class="chip ${statusClass(st)}">${esc(st)}</span></div>
+      <button class="cell" id="t-share"><div class="main" style="pointer-events:none">Summary</div><span style="color:var(--accent);pointer-events:none">Share to WhatsApp</span><span class="chev" style="pointer-events:none">›</span></button>
+    </div><div style="height:14px"></div>`;
   for (const g of t.tags) {
     const s = Report.tagStatus(t, g);
     h += `<div class="card tag s-${s}">
@@ -392,11 +438,11 @@ async function renderTest(id, keepScroll) {
   }
   if (formN) h += `<div class="card"><b>Site test form (whole test)</b> <span class="chip Pass">${formN} page(s)</span>
     <div class="thumbs">${await thumbs(FORM)}</div></div>`;
-  h += `<div class="card"><b>General photos</b><div class="hint">Not linked to a specific tag.</div><div class="thumbs">${await thumbs("")}</div></div>`;
+  h += `<div class="sec">General photos</div><div class="card"><div class="hint" style="margin:0">Not linked to a specific tag.</div><div class="thumbs" style="margin-top:8px">${await thumbs("")}</div></div>`;
   if (S.syncUrl && !t.photosPurged) h += needsExport(t)
-    ? `<button class="btn block" id="t-sync" style="margin:4px 0 6px;padding:15px;background:var(--pass)">✓ Finished — sync this test</button>`
-      + `<button class="btn ghost block" id="t-nosync" style="margin:0 0 14px">Already on the laptop — mark as sent</button>`
-    : `<div class="sync-bar" style="text-align:center">☁︎ Sent ✓${t.exportedAt ? " · " + new Date(t.exportedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}. On the laptop within 5 min. Any later change needs another sync.</div>`;
+    ? `<button class="btn block" id="t-sync" style="margin:6px 0 8px;background:var(--pass)">Finished — Sync</button>`
+      + `<button class="btn ghost block" id="t-nosync" style="margin:0 0 14px;background:transparent">Already on the laptop — mark as sent</button>`
+    : `<div class="sync-bar">Sent${t.exportedAt ? " " + new Date(t.exportedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""} · on the laptop within 5 min</div><div class="hint" style="margin:0 16px 14px">Any later change needs another sync.</div>`;
   if (t.photosPurged) h += `<div class="muted" style="text-align:center">Photos were cleared from the phone ${S.purgeDays} day(s) after export. They're on the laptop.</div>`;
   $("#view").innerHTML = h;
   if (keepScroll) window.scrollTo(0, y);
@@ -431,7 +477,7 @@ async function renderTest(id, keepScroll) {
       if (g.remark !== v) { g.remark = v; await save(t); }
     }
   };
-  $("#fab").innerHTML = t.photosPurged ? "" :
+  $("#fab").className = "fab glass"; $("#fab").innerHTML = t.photosPurged ? "" :
     `<button class="btn ghost" id="lib">From library</button><button class="btn" id="shot">📷 Photo</button>`;
   if (!t.photosPurged) {
     const go2 = (tagId, lib) => capture(t.id, tagId, lib, tagId && tagId !== FORM ? nextShot(t, tagId) : "");
@@ -609,7 +655,7 @@ function renderSettings() {
     catch (e) { toast("Can't reach the link: " + e.message, 4000); }
   };
   $("#s-ckreset").onclick = () => { $("#s-checklists").value = DEFAULTS.checklists; };
-  $("#fab").innerHTML = `<button class="btn" id="s-ok">Save settings</button>`;
+  $("#fab").className = "fab glass"; $("#fab").innerHTML = `<button class="btn" id="s-ok">Save settings</button>`;
   $("#s-member").onchange = (e) => {
     const m = (S.team || []).find((x) => x.ar === e.target.value);
     if (m) { $("#s-engineer").value = m.en || m.ar; $("#s-sheetName").value = m.ar; }
@@ -686,7 +732,8 @@ function syncLabel() {
 }
 function paintSync() {
   const b = document.getElementById("sync-bar");
-  if (b) { b.className = "sync-bar " + SYNC.state; b.textContent = syncLabel(); b.onclick = () => syncNow(true); }
+  const wait = SYNC.state === "idle" && TESTS.some(needsExport);
+  if (b) { b.className = "sync-bar " + (wait ? "wait" : SYNC.state); b.textContent = syncLabel().replace(/^[☁︎⚠︎]+\s*/u, ""); b.onclick = () => syncNow(true); }
 }
 function scheduleSync(ms) {
   if (!S.syncUrl || !S.autoSync) return;
