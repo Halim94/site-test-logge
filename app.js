@@ -395,7 +395,7 @@ async function renderTest(id, keepScroll) {
   h += `<div class="card"><b>General photos</b><div class="hint">Not linked to a specific tag.</div><div class="thumbs">${await thumbs("")}</div></div>`;
   if (S.syncUrl && !t.photosPurged) h += needsExport(t)
     ? `<button class="btn block" id="t-sync" style="margin:4px 0 6px;padding:15px;background:var(--pass)">✓ Finished — sync this test</button>`
-      + (t.exportedAt ? `<button class="btn ghost block" id="t-nosync" style="margin:0 0 14px">No changes — already synced</button>` : `<div style="height:8px"></div>`)
+      + `<button class="btn ghost block" id="t-nosync" style="margin:0 0 14px">Already on the laptop — mark as sent</button>`
     : `<div class="sync-bar" style="text-align:center">☁︎ Sent ✓${t.exportedAt ? " · " + new Date(t.exportedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}. On the laptop within 5 min. Any later change needs another sync.</div>`;
   if (t.photosPurged) h += `<div class="muted" style="text-align:center">Photos were cleared from the phone ${S.purgeDays} day(s) after export. They're on the laptop.</div>`;
   $("#view").innerHTML = h;
@@ -403,7 +403,7 @@ async function renderTest(id, keepScroll) {
 
   $("#view").onclick = async (e) => {
     if (e.target.id === "t-share") return shareSummary(t);
-    if (e.target.id === "t-nosync") { t.updatedAt = t.exportedAt; await dbPutTest(t); toast("OK — marked as synced"); return renderTest(t.id, true); }
+    if (e.target.id === "t-nosync") { if (!confirm("Mark this test as sent? Only do this if it's already on the laptop.")) return; t.exportedAt = Date.now(); t.updatedAt = t.exportedAt; await dbPutTest(t); toast("OK — marked as synced"); return renderTest(t.id, true); }
     if (e.target.id === "t-sync") {
       const miss = t.tags.reduce((n, g) => n + t.shots.filter((s) => !t.photos.some((p) => p.tagId === g.id && p.shot === s)).length, 0);
       const noForm = t.tags.filter((g) => !t.photos.some((p) => p.tagId === g.id && p.shot === FORM_SHOT)).length;
@@ -709,7 +709,7 @@ async function uploadInParts(name, b64, progress) {
   for (let i = 0; i < total; i++) {
     progress(i + 1, total);
     let last;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const r = await callSync(S.syncUrl, { key: S.syncKey, action: "upload_chunk", name, index: i, total, data: b64.slice(i * CH, (i + 1) * CH) });
         if (r.ok) { last = null; break; }
@@ -724,12 +724,38 @@ async function uploadInParts(name, b64, progress) {
   }
 }
 
+// Asks Google which tests already arrived (by test id + version stamp) and marks them as sent.
+// Fixes "it reached the laptop but the phone still says sync" (reply lost, app closed, weak signal).
+async function checkReceipts(onlyId) {
+  const list = TESTS.filter((t) => needsExport(t) && (!onlyId || t.id === onlyId));
+  if (!S.syncUrl || !navigator.onLine || !list.length) return 0;
+  let n = 0;
+  try {
+    const r = await callSync(S.syncUrl, { key: S.syncKey, action: "receipts", ids: list.map((t) => t.id) });
+    if (!r.ok || !r.r) return 0;
+    for (const t of list) {
+      const got = r.r[t.id];
+      if (got && got >= (t.updatedAt || 0)) { t.exportedAt = Date.now(); await dbPutTest(t); n++; }
+    }
+  } catch {}
+  if (n) { if (route.name === "home") renderHome(); else if (route.name === "test") renderTest(route.id, true); paintSync(); }
+  return n;
+}
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener?.("release", () => (wakeLock = null)); }
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}
 async function syncNow(manual, onlyId) {
   if (!S.syncUrl || SYNC.busy) return;
+  await checkReceipts(onlyId);
   const list = TESTS.filter((t) => needsExport(t) && (!onlyId || t.id === onlyId));
   if (!list.length) { if (manual) toast("Everything is already sent ✓"); SYNC.state = "idle"; paintSync(); return; }
   if (!navigator.onLine) { SYNC.state = "offline"; paintSync(); if (manual) toast("No internet — will sync when you're back online"); return; }
   SYNC.busy = true; SYNC.state = "busy";
+  keepAwake(true);   // screen stays on while uploading (iPhone pauses the app when the screen locks)
   let sent = 0;
   try {
     for (const t of list) {
@@ -737,8 +763,15 @@ async function syncNow(manual, onlyId) {
       const stamp = t.updatedAt || Date.now();
       const blob = await Report.buildExportZip([t], TESTS, S, getPhotoBuf, getPhotoSmall);
       if (blob.size > 150 * 1048576) throw new Error(`"${t.system}" is too big (${(blob.size / 1048576).toFixed(0)} MB) — use manual export`);
-      const name = `SiteTests_${t.date}_${String(t.sr || 0).padStart(2, "0")}_${t.id}_${Date.now()}.zip`;
-      await uploadInParts(name, await blobToBase64(blob), (i, n) => { SYNC.msg = `${sent + 1}/${list.length}` + (n > 1 ? ` · part ${i}/${n}` : ""); paintSync(); });
+      const name = `SiteTests_${t.date}_${String(t.sr || 0).padStart(2, "0")}_${t.id}_${stamp}_${Date.now()}.zip`;
+      try {
+        await uploadInParts(name, await blobToBase64(blob), (i, n) => { SYNC.msg = `${sent + 1}/${list.length}` + (n > 1 ? ` · part ${i}/${n}` : ""); paintSync(); });
+      } catch (e) {
+        // the reply may have been lost after Google already saved it -> ask before calling it a failure
+        await new Promise((res) => setTimeout(res, 3000));
+        const r = await callSync(S.syncUrl, { key: S.syncKey, action: "receipts", ids: [t.id] }).catch(() => null);
+        if (!(r && r.ok && r.r && r.r[t.id] >= stamp)) throw e;
+      }
       if ((t.updatedAt || 0) === stamp) { t.exportedAt = Date.now(); await dbPutTest(t); } // changed meanwhile → next round
       await learnChecklist(t);
       sent++;
@@ -751,6 +784,7 @@ async function syncNow(manual, onlyId) {
     if (manual) toast("Sync failed: " + e.message, 4000);
     scheduleSync(5 * 60000);
   } finally {
+    keepAwake(false);
     SYNC.busy = false; paintSync();
     if (route.name === "home") renderHome();
     if (TESTS.some(needsExport) && SYNC.state === "idle") scheduleSync(90000);
@@ -905,7 +939,8 @@ async function purgeOld() {
   render();
   window.addEventListener("online", () => scheduleSync(3000));
   window.addEventListener("offline", () => { SYNC.state = "offline"; paintSync(); });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") scheduleSync(3000); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { checkReceipts(); scheduleSync(3000); } });
+  checkReceipts();
   scheduleSync(3000);
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
